@@ -1,0 +1,29 @@
+[project]
+name = "thesis-gravity"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "agno",
+    "email-validator",
+    "fastapi[standard]",
+    "openai",
+    "passlib[bcrypt]",
+    "pypdf",
+    "python-jose[cryptography]",
+    "python-multipart",
+    "sqlalchemy>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit",
+    "pytest",
+    "ruff",
+]
+
+[[tool.uv.index]]
+url = "http://mirrors.aliyun.com/pypi/simple/"
+default = true
+
+[tool.ruff]
+line-length = 119

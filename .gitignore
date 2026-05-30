@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+data/
+
+.env
+.DS_Store
+uv.lock
