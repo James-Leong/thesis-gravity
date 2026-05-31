@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { apiFetch, UserRead } from "../api/client";
 
 export function Register() {
@@ -36,6 +37,9 @@ export function Register() {
       <h2 className="section-title">注册</h2>
       <div className="card">
         <form className="form" onSubmit={handleSubmit}>
+          <p className="meta">
+            请先选择你的身份。导师登录后可以创建学生账号，学生登录后进入学生工作台。
+          </p>
           <div>
             <label htmlFor="reg-email">邮箱</label>
             <input
@@ -43,7 +47,7 @@ export function Register() {
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="导师邮箱@example.edu"
+              placeholder="请输入邮箱"
               required
             />
           </div>
@@ -77,6 +81,9 @@ export function Register() {
           </button>
           {notice ? <div className="notice">{notice}</div> : null}
           {error ? <div className="notice error">{error}</div> : null}
+          <p className="meta">
+            已有账号？<Link to="/login">去登录</Link>
+          </p>
         </form>
       </div>
     </section>

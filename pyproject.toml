@@ -4,10 +4,10 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "agno",
+    "bcrypt",
     "email-validator",
     "fastapi[standard]",
     "openai",
-    "passlib[bcrypt]",
     "pypdf",
     "python-jose[cryptography]",
     "python-multipart",

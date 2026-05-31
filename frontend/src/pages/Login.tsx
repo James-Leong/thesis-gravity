@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { UserRead, apiFetch } from "../api/client";
 
 type LoginProps = {
@@ -6,6 +7,7 @@ type LoginProps = {
 };
 
 export function Login({ onAuth }: LoginProps) {
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -24,6 +26,7 @@ export function Login({ onAuth }: LoginProps) {
       });
       onAuth(result);
       setNotice("登录成功，已写入安全会话 Cookie。");
+      navigate("/workspace");
     } catch (err) {
       const message =
         typeof err === "object" && err !== null && "detail" in err
@@ -47,7 +50,7 @@ export function Login({ onAuth }: LoginProps) {
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="学生邮箱@example.edu"
+              placeholder="请输入邮箱"
               required
             />
           </div>

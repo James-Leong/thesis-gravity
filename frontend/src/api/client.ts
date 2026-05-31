@@ -1,6 +1,13 @@
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+export const ROLE_LABELS = {
+  student: "学生",
+  mentor: "导师",
+  academic: "教务",
+  admin: "管理员",
+} as const;
+
 type ApiError = {
   status: number;
   detail: string;
@@ -44,13 +51,19 @@ export type Notification = {
   created_at: string;
 };
 
+export type UserRole = keyof typeof ROLE_LABELS;
+
 export type UserRead = {
   id: number;
   email: string;
-  role: string;
+  role: UserRole;
   is_active: boolean;
   created_at: string;
 };
+
+export function formatRoleLabel(role: UserRole): string {
+  return ROLE_LABELS[role];
+}
 
 async function parseError(response: Response): Promise<ApiError> {
   let detail = response.statusText;

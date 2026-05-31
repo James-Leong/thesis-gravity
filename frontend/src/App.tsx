@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
-import { UserRead, apiFetch } from "./api/client";
+import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { UserRead, apiFetch, formatRoleLabel } from "./api/client";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { NotFound } from "./pages/NotFound";
 import { Register } from "./pages/Register";
-import { Student } from "./pages/Student";
+import { Workspace } from "./pages/Workspace";
 
 export function App() {
   const [user, setUser] = useState<UserRead | null>(null);
@@ -39,7 +39,7 @@ export function App() {
   }, []);
 
   const authStatus = useMemo(
-    () => (user ? `已登录：${user.role}` : "未登录"),
+    () => (user ? `已登录：${formatRoleLabel(user.role)}` : "未登录"),
     [user]
   );
 
@@ -78,9 +78,9 @@ export function App() {
             <NavLink to="/" end>
               首页
             </NavLink>
-            <NavLink to="/student">学生</NavLink>
-            <NavLink to="/login">登录</NavLink>
-            <NavLink to="/register">注册</NavLink>
+            {user ? <NavLink to="/workspace">工作台</NavLink> : null}
+            {!user ? <NavLink to="/login">登录</NavLink> : null}
+            {!user ? <NavLink to="/register">注册</NavLink> : null}
           </nav>
 
           <div className="nav-status">
@@ -99,9 +99,11 @@ export function App() {
             <Route path="/login" element={<Login onAuth={handleAuth} />} />
             <Route path="/register" element={<Register />} />
             <Route
-              path="/student"
-              element={<Student user={user} authChecked={authChecked} />}
+              path="/workspace"
+              element={<Workspace user={user} authChecked={authChecked} />}
             />
+            <Route path="/student" element={<Navigate to="/workspace" replace />} />
+            <Route path="/mentor" element={<Navigate to="/workspace" replace />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
