@@ -19,9 +19,13 @@ class AnalysisTaskRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    thesis_id: int | None = None
+    version_id: int | None = None
+    thesis_title: str | None = None
     status: str
     result: AnalysisResult | None = None
     error_message: str | None = None
+    created_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
 

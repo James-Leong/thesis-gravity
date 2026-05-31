@@ -30,9 +30,13 @@ export type AnalysisResult = {
 
 export type AnalysisTask = {
   id: number;
+  thesis_id?: number | null;
+  version_id?: number | null;
+  thesis_title?: string | null;
   status: string;
   result: AnalysisResult | null;
   error_message?: string | null;
+  created_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
 };

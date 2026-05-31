@@ -77,6 +77,7 @@
 - [ ] /auth/logout
 - [ ] /auth/me
 - [ ] /theses/drafts
+- [ ] /tasks
 - [ ] /tasks/{task_id}
 - [ ] /notifications
 - [ ] /notifications/{id}/read

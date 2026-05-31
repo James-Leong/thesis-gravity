@@ -1,0 +1,16 @@
+{
+    "files.exclude": {
+        "**/__pycache__": true
+    },
+    "git.untrackedChanges": "separate",
+    "python.terminal.useEnvFile": true,
+    "python.testing.pytestArgs": [
+        "-s",  // 获取print输出
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "search.exclude": {
+        "my_scripts/": true
+    },
+}

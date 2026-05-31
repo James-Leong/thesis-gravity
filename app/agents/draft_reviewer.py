@@ -3,9 +3,8 @@ from __future__ import annotations
 from functools import lru_cache
 
 from agno.agent import Agent
-from agno.models.openai.like import OpenAILike
 
-from app.core.config import settings
+from app.agents.core.model import TgModel
 from app.schemas.analysis import AnalysisResult
 
 INSTRUCTIONS = (
@@ -16,23 +15,11 @@ INSTRUCTIONS = (
 )
 
 
-def _build_model():
-    if settings.llm_base_url:
-        if not settings.llm_api_key:
-            raise ValueError("LLM_API_KEY is required when LLM_BASE_URL is set.")
-        return OpenAILike(
-            id=settings.llm_model_id,
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-        )
-    return f"{settings.llm_provider}:{settings.llm_model_id}"
-
-
 @lru_cache(maxsize=1)
 def get_draft_reviewer_agent() -> Agent:
     return Agent(
         name="DraftReviewer",
-        model=_build_model(),
+        model=TgModel(),
         instructions=INSTRUCTIONS,
         output_schema=AnalysisResult,
     )

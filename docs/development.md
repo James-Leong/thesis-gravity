@@ -40,6 +40,7 @@ cp .env.example .env
 - `LLM_MODEL_ID`
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
+- `LOG_LEVEL`
 - `REFERENCE_DOC_PATH`
 
 ## 启动方式
@@ -55,6 +56,7 @@ cp .env.example .env
 - 同时启动 FastAPI 后端和 Vite 前端
 - 默认后端地址：`http://127.0.0.1:8000`
 - 默认前端地址：`http://127.0.0.1:5173`
+- 前端日志会写到临时文件；如果 Vite 启动失败，脚本会直接输出日志并退出
 
 ### 生产模式
 
@@ -73,6 +75,7 @@ cp .env.example .env
 - 缺少后端依赖时，手动执行 `uv sync --all-groups`。
 - 缺少前端依赖时，手动执行 `cd frontend && npm install`。
 - 如果 `frontend/node_modules` 缺失，`start.sh` 应直接失败，不要在脚本里隐式补装。
+- `./start.sh` 会在打印地址前检查前端是否成功启动，避免输出误导性的访问地址。
 
 ## 开发脚本
 
@@ -100,6 +103,7 @@ uv run ruff format .
 - SQLite 数据库默认位于 `data/app.db`
 - 论文上传目录默认位于 `data/theses/{student_id}/`
 - 本地运行数据统一放在 `data/` 下
+- 上传的 PDF 会先做内容校验；无法解析、空白或纯图片扫描件会被拒绝，且不会保留无效文件
 
 ## 认证约定
 

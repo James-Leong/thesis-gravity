@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
+
 
 def _getenv(key: str, default: str) -> str:
     return os.getenv(key, default)
@@ -22,6 +24,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 class Settings:
     def __init__(self) -> None:
+        load_dotenv()
         self.base_dir = Path(_getenv("APP_BASE_DIR", str(BASE_DIR)))
         self.app_name = _getenv("APP_NAME", "Thesis Guidance")
         self.data_dir = Path(_getenv("DATA_DIR", str(self.base_dir / "data")))
@@ -52,6 +55,7 @@ class Settings:
         self.max_pages = int(_getenv("MAX_PAGES", "30"))
         self.max_page_chars = int(_getenv("MAX_PAGE_CHARS", "4000"))
         self.cors_origins = _csv(_getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"))
+        self.log_level = _getenv("LOG_LEVEL", "DEBUG")
 
 
 settings = Settings()

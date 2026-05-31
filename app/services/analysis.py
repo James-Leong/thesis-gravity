@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from app.agents.draft_reviewer import get_draft_reviewer_agent
 from app.core.config import settings
@@ -16,6 +18,8 @@ from app.core.constants import (
 from app.db import SessionLocal
 from app.models import AnalysisTask, Notification
 from app.schemas.analysis import AnalysisResult
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_path(path_str: str) -> Path:
@@ -84,6 +88,17 @@ def analyze_pdf(file_path: str) -> AnalysisResult:
     return AnalysisResult.model_validate(content)
 
 
+def _to_user_facing_error(exc: Exception) -> str:
+    message = str(exc)
+    if "OPENAI_API_KEY not set" in message:
+        return "本次分析暂未完成，请稍后重试。"
+    if isinstance(exc, FileNotFoundError):
+        return "未找到论文文件，请重新上传后再试。"
+    if isinstance(exc, (PdfReadError, ValueError)):
+        return "论文文件无法正常解析，请确认上传的是可读取的 PDF。"
+    return "本次分析暂未完成，请稍后重试。"
+
+
 def run_analysis_task(task_id: int) -> None:
     db = SessionLocal()
     try:
@@ -118,10 +133,11 @@ def run_analysis_task(task_id: int) -> None:
 
         db.commit()
     except Exception as exc:  # noqa: BLE001
+        logger.exception("Analysis task %s failed", task_id)
         task = db.get(AnalysisTask, task_id)
         if task:
             task.status = ANALYSIS_STATUS_FAILED
-            task.error_message = str(exc)
+            task.error_message = _to_user_facing_error(exc)
             task.finished_at = datetime.now(timezone.utc)
             db.commit()
     finally:

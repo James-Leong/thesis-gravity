@@ -6,6 +6,9 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+
 from app.core.config import settings
 from app.core.constants import ALLOWED_UPLOAD_EXTENSIONS
 
@@ -28,3 +31,39 @@ def save_pdf(upload_file: UploadFile, student_id: int) -> str:
         shutil.copyfileobj(upload_file.file, target)
 
     return str(dest_path.relative_to(settings.base_dir))
+
+
+def validate_pdf_content(pdf_path: Path) -> None:
+    try:
+        reader = PdfReader(str(pdf_path))
+    except PdfReadError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="PDF 文件无法正常解析，请确认上传的是可读取的 PDF。",
+        ) from exc
+
+    if len(reader.pages) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="PDF 文件为空，请检查文件内容。",
+        )
+
+    has_meaningful_text = False
+    for page in reader.pages:
+        text = (page.extract_text() or "").strip()
+        if text:
+            has_meaningful_text = True
+            break
+
+    if not has_meaningful_text:
+        raise HTTPException(
+            status_code=400,
+            detail="PDF 文件中未能提取到有效文本，请确认文件为可读的 PDF 格式（非扫描件或纯图片）。",
+        )
+
+
+def remove_uploaded_file(file_path: Path) -> None:
+    try:
+        file_path.unlink(missing_ok=True)
+    except OSError:
+        return

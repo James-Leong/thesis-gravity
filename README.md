@@ -100,6 +100,7 @@ cp .env.example .env
 - `LLM_MODEL_ID`
 - `LLM_API_KEY`
 - `LLM_BASE_URL`（使用兼容网关时）
+- `LOG_LEVEL`
 - `REFERENCE_DOC_PATH`
 
 如果只做接口联调，不调用真实模型，可以先保留默认值，但分析任务会在实际执行模型时失败。
@@ -146,6 +147,7 @@ npm run dev
 可通过 `VITE_API_BASE_URL` 指向后端服务。
 
 `./start.sh prod` 会先构建前端，再用 FastAPI 提供静态资源和 API。
+开发模式下，`./start.sh` 会把前端日志写入临时文件；如果 Vite 启动失败，会直接输出日志并退出。
 
 ## 关键环境变量
 
@@ -163,6 +165,7 @@ npm run dev
 | `LLM_MODEL_ID` | `gpt-4o-mini` | 模型标识 |
 | `LLM_API_KEY` | 空 | 模型访问密钥 |
 | `LLM_BASE_URL` | 空 | OpenAI-compatible 网关地址 |
+| `LOG_LEVEL` | `DEBUG` | 应用日志级别 |
 | `REFERENCE_DOC_PATH` | `source/common-problems-for-students.md` | 参考规范文档，仅支持 `.md/.txt` |
 | `MAX_PAGES` | `30` | 单次分析最多读取页数 |
 | `MAX_PAGE_CHARS` | `4000` | 单页截断字符数 |
@@ -177,6 +180,7 @@ npm run dev
 | `POST` | `/auth/logout` | 清除当前会话 Cookie |
 | `GET` | `/auth/me` | 获取当前登录用户 |
 | `POST` | `/theses/drafts` | 学生上传论文草稿 PDF |
+| `GET` | `/tasks` | 获取当前用户可见的分析任务列表 |
 | `GET` | `/tasks/{task_id}` | 查询分析任务状态与结果 |
 | `GET` | `/notifications` | 获取当前用户通知 |
 | `POST` | `/notifications/{id}/read` | 标记通知已读 |
@@ -188,6 +192,7 @@ npm run dev
 - 默认使用绝对导入。
 - 前端不保存 Bearer token；登录态通过 `HttpOnly` Cookie 维持。
 - 上传文件仅支持 PDF。
+- 上传的 PDF 必须可解析且能提取到文本内容；空白文件、纯图片扫描件会被拒绝，且不会保留无效上传文件。
 - 论文分析参考文档当前只读取 Markdown 或纯文本，不直接读取 PDF。
 - 提交前运行：
 

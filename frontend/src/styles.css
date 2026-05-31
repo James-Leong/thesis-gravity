@@ -213,6 +213,10 @@ a {
   margin-top: 0;
 }
 
+.card h4 {
+  margin: 0 0 10px;
+}
+
 .section {
   margin-top: 48px;
 }
@@ -220,6 +224,205 @@ a {
 .section-title {
   font-size: 22px;
   margin-bottom: 16px;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.section-heading.compact {
+  margin-bottom: 18px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.student-dashboard {
+  display: grid;
+  gap: 28px;
+}
+
+.dashboard-hero {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(280px, 1.3fr) minmax(320px, 1fr);
+}
+
+.dashboard-hero-copy {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.dashboard-hero-stats {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.student-console-layout {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+
+.student-main-column,
+.student-side-column {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.task-toolbar {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.task-detail {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.task-empty {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px dashed var(--stroke);
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.task-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-pending {
+  background: rgba(43, 83, 255, 0.1);
+  color: #2842a6;
+}
+
+.task-running {
+  background: rgba(255, 107, 61, 0.12);
+  color: #a24420;
+}
+
+.task-completed {
+  background: rgba(42, 182, 166, 0.14);
+  color: #0c5a52;
+}
+
+.task-failed {
+  background: rgba(180, 31, 31, 0.12);
+  color: #8b1d1d;
+}
+
+.task-meta-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.task-meta-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--stroke);
+}
+
+.task-summary-card {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--stroke);
+}
+
+.task-result-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.issue-list {
+  display: grid;
+  gap: 14px;
+}
+
+.issue-item {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(248, 246, 241, 0.9);
+  border: 1px solid var(--stroke);
+}
+
+.issue-item p {
+  margin: 8px 0 0;
+}
+
+.issue-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.issue-severity {
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.history-task-list {
+  display: grid;
+  gap: 12px;
+}
+
+.history-task-item {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.history-task-item.active {
+  border-color: rgba(43, 83, 255, 0.28);
+  background: rgba(43, 83, 255, 0.08);
+}
+
+.history-task-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
 }
 
 .form {
@@ -344,5 +547,18 @@ button.ghost {
   .footer {
     flex-direction: column;
     gap: 8px;
+  }
+
+  .dashboard-hero,
+  .student-console-layout,
+  .task-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .section-heading,
+  .issue-row,
+  .history-task-row {
+    flex-direction: column;
+    align-items: start;
   }
 }
