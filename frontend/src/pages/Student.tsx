@@ -22,6 +22,7 @@ export function Student({ user, authChecked }: StudentProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ignoredIssues, setIgnoredIssues] = useState<Set<string>>(new Set());
 
   const requireToken = () => {
     if (!user) {
@@ -74,6 +75,9 @@ export function Student({ user, authChecked }: StudentProps) {
     try {
       const result = await apiFetch<AnalysisTask>(`/tasks/${task.id}`);
       setTask(result);
+      setHistoryTasks((prev) =>
+        prev.map((t) => (t.id === result.id ? result : t))
+      );
       setNotice("任务状态已刷新。");
     } catch (err) {
       const message =
@@ -131,7 +135,12 @@ export function Student({ user, authChecked }: StudentProps) {
       if (result.length > 0) {
         const selected =
           (selectedTaskId ? result.find((item) => item.id === selectedTaskId) : null) ?? result[0];
-        setTask(selected);
+        setTask((prev) => {
+          if (prev && prev.id === selected.id) {
+            return selected;
+          }
+          return selected;
+        });
       } else {
         setTask(null);
       }
@@ -154,6 +163,30 @@ export function Student({ user, authChecked }: StudentProps) {
     void loadTasks(false);
   }, [authChecked, user]);
 
+  useEffect(() => {
+    setIgnoredIssues(new Set());
+  }, [task?.id]);
+
+  useEffect(() => {
+    if (!task || (task.status !== "pending" && task.status !== "running")) return;
+
+    const interval = setInterval(() => {
+      void (async () => {
+        try {
+          const refreshed = await apiFetch<AnalysisTask>(`/tasks/${task.id}`);
+          setTask(refreshed);
+          setHistoryTasks((prev) =>
+            prev.map((t) => (t.id === refreshed.id ? refreshed : t))
+          );
+        } catch {
+          // ignore polling errors
+        }
+      })();
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [task?.id, task?.status]);
+
   const formatTaskStatus = (status: string) => {
     switch (status) {
       case "pending":
@@ -174,11 +207,14 @@ export function Student({ user, authChecked }: StudentProps) {
     return new Date(value).toLocaleString("zh-CN");
   };
 
+  const isReadyForMentor = (t: AnalysisTask | null) =>
+    !!t?.result?.ready_for_mentor || !!t?.student_ready_for_mentor;
+
   const getTaskHeadline = () => {
     if (!task) {
       return "还没有加载论文任务";
     }
-    if (task.status === "completed" && task.result?.ready_for_mentor) {
+    if (task.status === "completed" && isReadyForMentor(task)) {
       return "当前稿件已经完成分析，可以考虑提交导师";
     }
     if (task.status === "completed") {
@@ -197,7 +233,7 @@ export function Student({ user, authChecked }: StudentProps) {
     if (!task) {
       return "如果你还没有提交论文，可以先上传新稿。提交后，这里会自动显示最新分析状态。";
     }
-    if (task.status === "completed" && task.result?.ready_for_mentor) {
+    if (task.status === "completed" && isReadyForMentor(task)) {
       return "建议检查摘要和问题列表，确认无误后进入导师评审阶段。";
     }
     if (task.status === "completed") {
@@ -215,6 +251,49 @@ export function Student({ user, authChecked }: StudentProps) {
     }
     return item.thesis_title?.trim() || "未命名稿件";
   };
+
+  const isLowSeverity = (severity: string) => {
+    const s = severity.toLowerCase();
+    return (
+      s.includes("低") || s.includes("low") || s.includes("minor") || s.includes("info")
+    );
+  };
+
+  const toggleIgnoreIssue = (key: string) => {
+    setIgnoredIssues((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const handleSubmitForMentor = async () => {
+    if (!task) return;
+    setNotice(null);
+    setError(null);
+    setLoading(true);
+    try {
+      await apiFetch(`/tasks/${task.id}/submit-for-mentor`, { method: "POST" });
+      await handleTaskRefresh();
+      setNotice("稿件已提交进入导师评审流程。");
+    } catch (err) {
+      const message =
+        typeof err === "object" && err !== null && "detail" in err
+          ? String((err as { detail: string }).detail)
+          : "提交失败。";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const latestTask = historyTasks[0] ?? null;
+  const hasActiveTask =
+    !!latestTask && (latestTask.status === "pending" || latestTask.status === "running");
 
   return (
     <section className="section">
@@ -240,7 +319,7 @@ export function Student({ user, authChecked }: StudentProps) {
               <span className="meta">导师提交建议</span>
               <strong>
                 {task?.result
-                  ? task.result.ready_for_mentor
+                  ? isReadyForMentor(task)
                     ? "可以提交导师"
                     : "建议先修改"
                   : "等待分析结果"}
@@ -264,9 +343,10 @@ export function Student({ user, authChecked }: StudentProps) {
 
               <div className="task-toolbar">
                 <div>
-                  <p className="eyebrow">当前查看</p>
-                  <h4>{getTaskLabel(task)}</h4>
-                  <p className="meta">提交时间：{formatTime(task?.created_at)}</p>
+                  <strong>{getTaskLabel(task)}</strong>
+                  <span className="meta" style={{ marginLeft: 8 }}>
+                    提交于 {formatTime(task?.created_at)}
+                  </span>
                 </div>
                 <button className="ghost" onClick={handleTaskRefresh} disabled={loading}>
                   刷新状态
@@ -296,7 +376,7 @@ export function Student({ user, authChecked }: StudentProps) {
                         <p>{task.result.summary}</p>
                         <p className="meta">总体评估：{task.result.overall_assessment}</p>
                         <p className="meta">
-                          下一步判断：{task.result.ready_for_mentor ? "可以进入导师评审" : "建议继续修改后再提交"}
+                          下一步判断：{isReadyForMentor(task) ? "可以进入导师评审" : "建议继续修改后再提交"}
                         </p>
                       </div>
 
@@ -306,18 +386,63 @@ export function Student({ user, authChecked }: StudentProps) {
                           <p className="meta">当前没有识别到明确问题，可以结合导师意见或自查后再决定是否提交。</p>
                         ) : (
                           <div className="issue-list">
-                            {task.result.issues.map((issue, index) => (
-                              <div key={`${issue.page}-${index}`} className="issue-item">
-                                <div className="issue-row">
-                                  <strong>
-                                    第 {issue.page} 页 · {issue.issue_type}
-                                  </strong>
-                                  <span className="issue-severity">{issue.severity}</span>
-                                </div>
-                                <p>{issue.description}</p>
-                                <p className="meta">建议修改：{issue.suggestion}</p>
-                              </div>
-                            ))}
+                            {(() => {
+                              const visibleIssues = task.result!.issues.filter((issue, idx) => {
+                                const key = `${issue.page}-${issue.issue_type}-${idx}`;
+                                return !ignoredIssues.has(key);
+                              });
+                              const highMediumCount = visibleIssues.filter(
+                                (i) => !isLowSeverity(i.severity)
+                              ).length;
+                              const allCleared = highMediumCount === 0;
+                              return (
+                                <>
+                                  {visibleIssues.length === 0 ? (
+                                    <p className="meta">所有问题已处理或忽略。</p>
+                                  ) : (
+                                    visibleIssues.map((issue, index) => {
+                                      const key = `${issue.page}-${issue.issue_type}-${task.result!.issues.indexOf(issue)}`;
+                                      const low = isLowSeverity(issue.severity);
+                                      return (
+                                        <div key={key} className="issue-item">
+                                          <div className="issue-row">
+                                            <strong>
+                                              第 {issue.page} 页 · {issue.issue_type}
+                                            </strong>
+                                            <span className="issue-severity">{issue.severity}</span>
+                                          </div>
+                                          <p>{issue.description}</p>
+                                          <p className="meta">建议修改：{issue.suggestion}</p>
+                                          {low && (
+                                            <button
+                                              className="ghost"
+                                              style={{ marginTop: 8, fontSize: 12 }}
+                                              onClick={() => toggleIgnoreIssue(key)}
+                                              disabled={loading}
+                                            >
+                                              忽略此问题
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                  {allCleared && !isReadyForMentor(task) && (
+                                    <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--stroke)" }}>
+                                      <p className="meta">所有中高优先级问题已处理，可以提交进入导师评审。</p>
+                                      <button
+                                        className="primary"
+                                        onClick={handleSubmitForMentor}
+                                        disabled={loading}
+                                        style={{ marginTop: 8 }}
+                                      >
+                                        提交进入导师评审
+                                      </button>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>
@@ -347,69 +472,42 @@ export function Student({ user, authChecked }: StudentProps) {
             <div className="card">
               <div className="section-heading compact">
                 <div>
-                  <p className="eyebrow">历史任务</p>
-                  <h3>最近提交记录</h3>
-                </div>
-              </div>
-
-              <div className="history-task-list">
-                {historyTasks.length === 0 ? (
-                  <p className="meta">当前还没有历史任务记录。</p>
-                ) : (
-                  historyTasks.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`history-task-item ${task?.id === item.id ? "active" : ""}`}
-                      onClick={() => {
-                        setTask(item);
-                      }}
-                    >
-                      <div className="history-task-row">
-                        <strong>{getTaskLabel(item)}</strong>
-                        <span className={`task-badge task-${item.status}`}>
-                          {formatTaskStatus(item.status)}
-                        </span>
-                      </div>
-                      <p className="meta">提交时间：{formatTime(item.created_at)}</p>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="section-heading compact">
-                <div>
                   <p className="eyebrow">快速操作</p>
                   <h3>提交新稿</h3>
                 </div>
               </div>
-              <form className="form" onSubmit={handleDraftSubmit}>
-                <div>
-                  <label htmlFor="draft-title">标题</label>
-                  <input
-                    id="draft-title"
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    placeholder="论文草稿标题"
-                    required
-                  />
+              {hasActiveTask ? (
+                <div className="task-empty">
+                  <h4>当前有分析任务正在进行</h4>
+                  <p className="meta">请等待当前分析完成后再提交新稿。</p>
                 </div>
-                <div>
-                  <label htmlFor="draft-file">PDF 文件</label>
-                  <input
-                    id="draft-file"
-                    type="file"
-                    accept="application/pdf"
-                    onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                    required
-                  />
-                </div>
-                <button className="primary" type="submit" disabled={loading}>
-                  {loading ? "正在提交..." : "提交新稿"}
-                </button>
-              </form>
+              ) : (
+                <form className="form" onSubmit={handleDraftSubmit}>
+                  <div>
+                    <label htmlFor="draft-title">标题</label>
+                    <input
+                      id="draft-title"
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder="论文草稿标题"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="draft-file">PDF 文件</label>
+                    <input
+                      id="draft-file"
+                      type="file"
+                      accept="application/pdf"
+                      onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                      required
+                    />
+                  </div>
+                  <button className="primary" type="submit" disabled={loading}>
+                    {loading ? "正在提交..." : "提交新稿"}
+                  </button>
+                </form>
+              )}
             </div>
 
             <div className="card">
@@ -440,6 +538,52 @@ export function Student({ user, authChecked }: StudentProps) {
                         <span className="meta">已读</span>
                       )}
                     </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="section-heading compact">
+                <div>
+                  <p className="eyebrow">历史任务</p>
+                  <h3>最近提交记录</h3>
+                </div>
+              </div>
+
+              <div className="history-task-list">
+                {historyTasks.length === 0 ? (
+                  <p className="meta">当前还没有历史任务记录。</p>
+                ) : (
+                  historyTasks.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`history-task-item ${task?.id === item.id ? "active" : ""}`}
+                      onClick={async () => {
+                        if (!item.result && item.status === "completed") {
+                          try {
+                            const full = await apiFetch<AnalysisTask>(`/tasks/${item.id}`);
+                            setTask(full);
+                            setHistoryTasks((prev) =>
+                              prev.map((t) => (t.id === full.id ? full : t))
+                            );
+                          } catch {
+                            setTask(item);
+                          }
+                        } else {
+                          setTask(item);
+                        }
+                      }}
+                    >
+                      <div className="history-task-row">
+                        <strong>{getTaskLabel(item)}</strong>
+                        <span className={`task-badge task-${item.status}`}>
+                          {formatTaskStatus(item.status)}
+                        </span>
+                      </div>
+                      <p className="meta">提交时间：{formatTime(item.created_at)}</p>
+                    </button>
                   ))
                 )}
               </div>

@@ -39,6 +39,7 @@ export type AnalysisTask = {
   created_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
+  student_ready_for_mentor?: boolean;
 };
 
 export type DraftResponse = {

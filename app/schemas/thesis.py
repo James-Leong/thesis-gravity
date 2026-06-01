@@ -25,6 +25,7 @@ class AnalysisTaskRead(BaseModel):
     status: str
     result: AnalysisResult | None = None
     error_message: str | None = None
+    student_ready_for_mentor: bool = False
     created_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None

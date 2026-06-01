@@ -19,7 +19,8 @@ run_dev() {
 
 	# 前端：后台启动，不用 nohup。终端关闭时它随 SIGHUP 退出；正常退出时由 EXIT trap 清理。
 	cd "$PROJECT_ROOT/frontend"
-	frontend_log=$(mktemp "${TMPDIR:-/tmp}/thesis-gravity-frontend.XXXXXX.log")
+	mkdir -p "$PROJECT_ROOT/logs"
+	frontend_log="$PROJECT_ROOT/logs/frontend-dev-$(date +%Y%m%d-%H%M%S)-$$.log"
 	npm run dev > "$frontend_log" 2>&1 &
 	frontend_pid=$!
 	cd "$PROJECT_ROOT"
@@ -29,7 +30,6 @@ run_dev() {
 	if ! kill -0 "$frontend_pid" 2>/dev/null; then
 		printf "frontend dev server failed to start. Logs:\n" >&2
 		cat "$frontend_log" >&2
-		rm -f "$frontend_log"
 		exit 1
 	fi
 
@@ -40,7 +40,7 @@ run_dev() {
 	printf "  ➜  Frontend log: %s\n\n" "$frontend_log"
 
 	# 仅此一条：后端退出时（正常、异常、或 Ctrl+C 导致后端退出后）自动杀前端
-	trap 'kill "$frontend_pid" 2>/dev/null; wait "$frontend_pid" 2>/dev/null; rm -f "$frontend_log"' EXIT
+	trap 'kill "$frontend_pid" 2>/dev/null; wait "$frontend_pid" 2>/dev/null' EXIT
 
 	# 后端：前台运行，阻塞 shell。Ctrl+C 直接发给后端进程组，shell 不参与。
 	uv run fastapi dev app/main.py

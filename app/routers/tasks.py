@@ -36,6 +36,7 @@ def _build_task_read(task: AnalysisTask) -> AnalysisTaskRead:
         status=task.status,
         result=result,
         error_message=error_message,
+        student_ready_for_mentor=task.student_ready_for_mentor,
         created_at=task.created_at,
         started_at=task.started_at,
         finished_at=task.finished_at,
@@ -75,4 +76,27 @@ def get_task(
         if not thesis or thesis.student_id != current_user.id:
             raise HTTPException(status_code=403, detail="Access denied.")
 
+    return _build_task_read(task)
+
+
+@router.post("/{task_id}/submit-for-mentor", response_model=AnalysisTaskRead)
+def submit_for_mentor(
+    task_id: int,
+    current_user=Depends(require_roles(ROLE_STUDENT)),
+    db: Session = Depends(get_db),
+) -> AnalysisTaskRead:
+    task = db.get(AnalysisTask, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+
+    thesis = task.version.thesis if task.version else None
+    if not thesis or thesis.student_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if task.status != "completed":
+        raise HTTPException(status_code=400, detail="分析尚未完成，无法提交导师评审。")
+
+    task.student_ready_for_mentor = True
+    db.commit()
+    db.refresh(task)
     return _build_task_read(task)
