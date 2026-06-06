@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.swift*/
 
 node_modules/
 frontend/node_modules/
@@ -10,6 +11,7 @@ frontend/dist/
 
 data/
 logs/
+tmp/
 
 .env
 .DS_Store

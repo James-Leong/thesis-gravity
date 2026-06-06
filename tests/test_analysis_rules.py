@@ -1,0 +1,80 @@
+from app.services.analysis_checklist import ChecklistDefinition
+from app.services.analysis_rules import ExtractedPage, build_visual_page_index, evaluate_rule_check
+
+
+def test_first_person_pronoun_rule_fails_when_we_is_present() -> None:
+    definition = ChecklistDefinition(
+        check_id="chk_pronoun",
+        title="第一人称表述",
+        source_section="论文的写法与内容 / 论文说法需严谨，语句需通顺、写法要规范",
+        requirement="“文中大量用了“我们”甚至“我们在本章中提出....”与论文是作者一人独立完成的规则相冲突。”",
+        layer="rule",
+        detector="first_person_pronouns",
+        severity="low",
+    )
+    pages = [
+        ExtractedPage(number=1, text="本文介绍研究背景。"),
+        ExtractedPage(number=2, text="我们在本章中提出一种新的方法。"),
+    ]
+
+    result = evaluate_rule_check(definition, pages, total_pages=2)
+
+    assert result.status == "failed"
+    assert result.pages == [2]
+
+
+def test_reference_citation_rule_fails_when_body_missing_entries() -> None:
+    definition = ChecklistDefinition(
+        check_id="chk_refs",
+        title="参考文献引用",
+        source_section="论文的格式、结构和文字表达 / 参考文献要求（续）",
+        requirement="文献未在正文中全部、按序、正确引用。",
+        layer="rule",
+        detector="reference_citations",
+        severity="medium",
+    )
+    pages = [
+        ExtractedPage(number=1, text="如文献[1]所示，方法有效。"),
+        ExtractedPage(number=2, text="参考文献\n[1] Author A. Paper A. 2022.\n[2] Author B. Paper B. 2021."),
+    ]
+
+    result = evaluate_rule_check(definition, pages, total_pages=2)
+
+    assert result.status == "failed"
+    assert "未在正文引用" in result.rationale
+
+
+def test_page_count_rule_passes_for_master_thesis_over_threshold() -> None:
+    definition = ChecklistDefinition(
+        check_id="chk_pages",
+        title="页数要求",
+        source_section="论文的格式、结构和文字表达 / 论文的字数与页数要求",
+        requirement="硕士论文篇幅正文（不含参考文献）一般不少于50页，博士论文篇幅正文一般不少于100页。",
+        layer="rule",
+        detector="page_count",
+        severity="medium",
+    )
+    pages = [ExtractedPage(number=1, text="硕士学位论文")] + [
+        ExtractedPage(number=index, text=f"第 {index} 页内容") for index in range(2, 55)
+    ]
+
+    result = evaluate_rule_check(definition, pages, total_pages=len(pages))
+
+    assert result.status == "passed"
+
+
+def test_build_visual_page_index_prefers_caption_and_reference_pages() -> None:
+    pages = [
+        ExtractedPage(number=1, text="第一章 绪论\n本文结构如下。"),
+        ExtractedPage(number=2, text="如图2-1所示，系统架构包括采集层与分析层。"),
+        ExtractedPage(number=3, text="图2-1 系统总体架构"),
+        ExtractedPage(number=4, text="进一步分析实验设置。"),
+        ExtractedPage(number=5, text="表3-1 实验参数设置"),
+        ExtractedPage(number=6, text="图目录\n图2-1 系统总体架构\n图4-2 消融实验结果"),
+    ]
+
+    index = build_visual_page_index(pages)
+
+    assert index.caption_pages == [3, 5]
+    assert index.reference_pages == [2]
+    assert index.candidate_pages == [2, 3, 4, 5, 6]

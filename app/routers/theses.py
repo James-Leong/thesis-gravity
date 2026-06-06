@@ -64,6 +64,7 @@ def submit_draft(
         id=task.id,
         status=task.status,
         result=None,
+        llm_usage_summary=None,
         error_message=task.error_message,
         started_at=task.started_at,
         finished_at=task.finished_at,

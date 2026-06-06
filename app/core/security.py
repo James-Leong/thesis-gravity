@@ -1,11 +1,12 @@
 import base64
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import bcrypt
 from jose import jwt
 
 from app.core.config import settings
+from app.utils.datetime import utcnow
 
 
 def _normalize_password(password: str) -> bytes:
@@ -25,6 +26,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 def create_access_token(subject: str, expires_minutes: int | None = None) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes or settings.access_token_expire_minutes)
+    expire = utcnow() + timedelta(minutes=expires_minutes or settings.access_token_expire_minutes)
     payload = {"sub": subject, "exp": expire}
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)

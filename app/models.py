@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.constants import ROLE_STUDENT
 from app.db import Base
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from app.utils.datetime import utcnow
 
 
 class User(Base):
@@ -74,13 +71,54 @@ class AnalysisTask(Base):
     version_id: Mapped[int] = mapped_column(ForeignKey("thesis_versions.id"), index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    llm_usage_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     student_ready_for_mentor: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ignored_issue_keys_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     version: Mapped[ThesisVersion] = relationship(back_populates="analysis_tasks")
+    llm_call_logs: Mapped[list[AnalysisLLMCallLog]] = relationship(
+        back_populates="analysis_task",
+        cascade="all, delete-orphan",
+    )
+
+
+class AnalysisLLMCallLog(Base):
+    __tablename__ = "analysis_llm_call_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    analysis_task_id: Mapped[int] = mapped_column(ForeignKey("analysis_tasks.id"), index=True, nullable=False)
+    phase: Mapped[str] = mapped_column(String(50), nullable=False)
+    call_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_prefix_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_prefix_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    time_to_first_token_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model_provider: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    check_ids_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    page_numbers_json: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    analysis_task: Mapped[AnalysisTask] = relationship(back_populates="llm_call_logs")
 
 
 class Notification(Base):

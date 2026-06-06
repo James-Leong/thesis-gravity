@@ -6,8 +6,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile
 
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
+import fitz
 
 from app.core.config import settings
 from app.core.constants import ALLOWED_UPLOAD_EXTENSIONS
@@ -35,25 +34,28 @@ def save_pdf(upload_file: UploadFile, student_id: int) -> str:
 
 def validate_pdf_content(pdf_path: Path) -> None:
     try:
-        reader = PdfReader(str(pdf_path))
-    except PdfReadError as exc:
+        doc = fitz.open(str(pdf_path))
+    except Exception as exc:
         raise HTTPException(
             status_code=400,
             detail="PDF 文件无法正常解析，请确认上传的是可读取的 PDF。",
         ) from exc
 
-    if len(reader.pages) == 0:
+    if len(doc) == 0:
+        doc.close()
         raise HTTPException(
             status_code=400,
             detail="PDF 文件为空，请检查文件内容。",
         )
 
     has_meaningful_text = False
-    for page in reader.pages:
-        text = (page.extract_text() or "").strip()
+    for page in doc:
+        text = page.get_text().strip()
         if text:
             has_meaningful_text = True
             break
+
+    doc.close()
 
     if not has_meaningful_text:
         raise HTTPException(

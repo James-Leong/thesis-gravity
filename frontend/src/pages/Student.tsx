@@ -23,6 +23,14 @@ export function Student({ user, authChecked }: StudentProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [ignoredIssues, setIgnoredIssues] = useState<Set<string>>(new Set());
+  const [checksExpanded, setChecksExpanded] = useState(false);
+  const isDevMode = import.meta.env.DEV;
+
+  // sync persisted ignored issues from backend
+  useEffect(() => {
+    const keys = task?.ignored_issue_keys ?? [];
+    setIgnoredIssues(new Set(keys));
+  }, [task?.id, task?.ignored_issue_keys?.length]);
 
   const requireToken = () => {
     if (!user) {
@@ -259,16 +267,96 @@ export function Student({ user, authChecked }: StudentProps) {
     );
   };
 
-  const toggleIgnoreIssue = (key: string) => {
-    setIgnoredIssues((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
+  const formatSeverity = (severity: string) => {
+    const s = severity.toLowerCase();
+    if (s.includes("高") || s.includes("high")) return "高";
+    if (s.includes("中") || s.includes("medium")) return "中";
+    return "低";
+  };
+
+  const severityOrder = (severity: string) => {
+    const s = severity.toLowerCase();
+    if (s.includes("高") || s.includes("high")) return 0;
+    if (s.includes("中") || s.includes("medium")) return 1;
+    return 2;
+  };
+
+  const formatCheckStatus = (status: string) => {
+    switch (status) {
+      case "passed":
+        return "通过";
+      case "failed":
+        return "未通过";
+      case "needs_manual_review":
+        return "待人工复核";
+      default:
+        return status;
+    }
+  };
+
+  const formatLayerLabel = (layer: string) => {
+    switch (layer) {
+      case "rule":
+        return "规则层";
+      case "text_model":
+        return "文本模型层";
+      case "vision_model":
+        return "视觉模型层";
+      default:
+        return layer;
+    }
+  };
+
+  const formatIssuePage = (page: number, pageLabel?: string | null, pdfPage?: number | null) => {
+    if (pageLabel && pdfPage && page !== pdfPage) {
+      return `论文第 ${pageLabel} 页（PDF 第 ${pdfPage} 页）`;
+    }
+    if (pageLabel) {
+      return `论文第 ${pageLabel} 页`;
+    }
+    return `PDF 第 ${page} 页`;
+  };
+
+  const formatCheckPages = (pages: number[], pageLabels: string[], pdfPages: number[]) => {
+    if (pageLabels.length > 0) {
+      return pageLabels
+        .map((label, index) => {
+          const page = pages[index];
+          const pdfPage = pdfPages[index];
+          if (pdfPage && page !== pdfPage) {
+            return `${label}（PDF ${pdfPage}）`;
+          }
+          return label;
+        })
+        .join("、");
+    }
+    return pages.join("、");
+  };
+
+  const toggleIgnoreIssue = async (key: string) => {
+    // if already ignored, un-ignore locally (no backend call needed)
+    if (ignoredIssues.has(key)) {
+      setIgnoredIssues((prev) => {
+        const next = new Set(prev);
         next.delete(key);
-      } else {
-        next.add(key);
+        return next;
+      });
+      return;
+    }
+    // in dev mode, call backend to persist; in prod, only low-severity goes through local set
+    if (isDevMode && task) {
+      try {
+        await apiFetch(`/tasks/${task.id}/issues/${encodeURIComponent(key)}/ignore`, { method: "POST" });
+      } catch (err) {
+        const message =
+          typeof err === "object" && err !== null && "detail" in err
+            ? String((err as { detail: string }).detail)
+            : "忽略失败。";
+        setError(message);
+        return;
       }
-      return next;
-    });
+    }
+    setIgnoredIssues((prev) => new Set(prev).add(key));
   };
 
   const handleSubmitForMentor = async () => {
@@ -374,10 +462,33 @@ export function Student({ user, authChecked }: StudentProps) {
                       <div className="task-summary-card">
                         <h4>AI 分析摘要</h4>
                         <p>{task.result.summary}</p>
+                        {task.result.global_summary && (
+                          <p className="meta">全文整体复核：{task.result.global_summary}</p>
+                        )}
+                        {task.result.visual_summary && (
+                          <p className="meta">图表视觉复核：{task.result.visual_summary}</p>
+                        )}
                         <p className="meta">总体评估：{task.result.overall_assessment}</p>
                         <p className="meta">
                           下一步判断：{isReadyForMentor(task) ? "可以进入导师评审" : "建议继续修改后再提交"}
                         </p>
+                        {task.result.layer_summaries.length > 0 && (
+                          <div className="issue-list" style={{ marginTop: 12 }}>
+                            {task.result.layer_summaries.map((layer) => (
+                              <div key={layer.layer} className="issue-item">
+                                <div className="issue-row">
+                                  <strong>{formatLayerLabel(layer.layer)}</strong>
+                                  <span className="issue-severity">
+                                    {layer.passed}/{layer.total} 通过
+                                  </span>
+                                </div>
+                                <p className="meta">
+                                  未通过 {layer.failed} 项，待人工复核 {layer.needs_manual_review} 项
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <div className="task-summary-card">
@@ -387,40 +498,40 @@ export function Student({ user, authChecked }: StudentProps) {
                         ) : (
                           <div className="issue-list">
                             {(() => {
-                              const visibleIssues = task.result!.issues.filter((issue, idx) => {
-                                const key = `${issue.page}-${issue.issue_type}-${idx}`;
-                                return !ignoredIssues.has(key);
-                              });
-                              const highMediumCount = visibleIssues.filter(
+                              const indexedIssues = task.result!.issues.map((issue, idx) => ({ ...issue, _origIdx: idx }));
+                              const sortedIssues = [...indexedIssues]
+                                .filter((issue) => !ignoredIssues.has(`${issue.page}-${issue.issue_type}-${issue._origIdx}`))
+                                .sort((a, b) => severityOrder(a.severity) - severityOrder(b.severity) || a._origIdx - b._origIdx);
+                              const highMediumCount = sortedIssues.filter(
                                 (i) => !isLowSeverity(i.severity)
                               ).length;
                               const allCleared = highMediumCount === 0;
                               return (
                                 <>
-                                  {visibleIssues.length === 0 ? (
+                                  {sortedIssues.length === 0 ? (
                                     <p className="meta">所有问题已处理或忽略。</p>
                                   ) : (
-                                    visibleIssues.map((issue, index) => {
-                                      const key = `${issue.page}-${issue.issue_type}-${task.result!.issues.indexOf(issue)}`;
+                                    sortedIssues.map((issue) => {
+                                      const key = `${issue.page}-${issue.issue_type}-${issue._origIdx}`;
                                       const low = isLowSeverity(issue.severity);
                                       return (
                                         <div key={key} className="issue-item">
                                           <div className="issue-row">
                                             <strong>
-                                              第 {issue.page} 页 · {issue.issue_type}
+                                              {formatIssuePage(issue.page, issue.page_label, issue.pdf_page)} · {issue.issue_type}
                                             </strong>
-                                            <span className="issue-severity">{issue.severity}</span>
+                                            <span className="issue-severity">{formatSeverity(issue.severity)}</span>
                                           </div>
                                           <p>{issue.description}</p>
                                           <p className="meta">建议修改：{issue.suggestion}</p>
-                                          {low && (
+                                          {(low || isDevMode) && (
                                             <button
                                               className="ghost"
                                               style={{ marginTop: 8, fontSize: 12 }}
                                               onClick={() => toggleIgnoreIssue(key)}
                                               disabled={loading}
                                             >
-                                              忽略此问题
+                                              忽略此问题{isDevMode && !low ? " (开发)" : ""}
                                             </button>
                                           )}
                                         </div>
@@ -445,6 +556,42 @@ export function Student({ user, authChecked }: StudentProps) {
                             })()}
                           </div>
                         )}
+                      </div>
+
+                      <div className="task-summary-card">
+                        <h4 style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }} onClick={() => setChecksExpanded((v) => !v)}>
+                          <span>{checksExpanded ? "▾" : "▸"} 逐项校验结果</span>
+                          <span style={{ fontSize: 12, color: "var(--muted)", marginLeft: "auto" }}>
+                            {task.result.checks.length} 项
+                          </span>
+                        </h4>
+                        {checksExpanded && (
+                          task.result.checks.length === 0 ? (
+                            <p className="meta">当前没有返回逐项校验明细。</p>
+                          ) : (
+                            <div className="issue-list">
+                              {task.result.checks.map((check) => (
+                                <div key={check.check_id} className="issue-item">
+                                  <div className="issue-row">
+                                    <strong>{check.title}</strong>
+                                    <span className="issue-severity">{formatCheckStatus(check.status)}</span>
+                                  </div>
+                                  <p className="meta">
+                                    {formatLayerLabel(check.layer)} · {check.source_section}
+                                  </p>
+                                  <p>{check.requirement}</p>
+                                  <p className="meta">判定依据：{check.rationale}</p>
+                                  <p className="meta">建议处理：{check.suggestion}</p>
+                                  {check.pages.length > 0 && (
+                                    <p className="meta">
+                                      涉及页码：{formatCheckPages(check.pages, check.page_labels, check.pdf_pages)}
+                                    </p>
+                                  )}
+                                </div>
+                            ))}
+                          </div>
+                        )
+                      )}
                       </div>
                     </div>
                   ) : task.status === "failed" ? (

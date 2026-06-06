@@ -8,7 +8,7 @@ dependencies = [
     "email-validator",
     "fastapi[standard]",
     "openai",
-    "pypdf",
+    "pymupdf",
     "python-jose[cryptography]",
     "python-multipart",
     "sqlalchemy>=2.0",

@@ -15,15 +15,44 @@ type ApiError = {
 
 export type AnalysisIssue = {
   page: number;
+  page_label?: string | null;
+  pdf_page?: number | null;
   issue_type: string;
   severity: string;
   description: string;
   suggestion: string;
 };
 
+export type AnalysisCheck = {
+  check_id: string;
+  title: string;
+  source_section: string;
+  requirement: string;
+  layer: "rule" | "text_model" | "vision_model";
+  severity: "low" | "medium" | "high";
+  status: "passed" | "failed" | "needs_manual_review";
+  rationale: string;
+  suggestion: string;
+  pages: number[];
+  page_labels: string[];
+  pdf_pages: number[];
+};
+
+export type AnalysisLayerSummary = {
+  layer: "rule" | "text_model" | "vision_model";
+  total: number;
+  passed: number;
+  failed: number;
+  needs_manual_review: number;
+};
+
 export type AnalysisResult = {
   summary: string;
+  global_summary?: string | null;
+  visual_summary?: string | null;
   issues: AnalysisIssue[];
+  checks: AnalysisCheck[];
+  layer_summaries: AnalysisLayerSummary[];
   overall_assessment: string;
   ready_for_mentor: boolean;
 };
@@ -40,6 +69,7 @@ export type AnalysisTask = {
   started_at?: string | null;
   finished_at?: string | null;
   student_ready_for_mentor?: boolean;
+  ignored_issue_keys?: string[] | null;
 };
 
 export type DraftResponse = {

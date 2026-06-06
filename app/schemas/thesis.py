@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.schemas.analysis import AnalysisResult
+from app.schemas.analysis import AnalysisLLMUsageSummary, AnalysisResult
 
 
 class ThesisRead(BaseModel):
@@ -24,6 +24,7 @@ class AnalysisTaskRead(BaseModel):
     thesis_title: str | None = None
     status: str
     result: AnalysisResult | None = None
+    llm_usage_summary: AnalysisLLMUsageSummary | None = None
     error_message: str | None = None
     student_ready_for_mentor: bool = False
     created_at: datetime | None = None

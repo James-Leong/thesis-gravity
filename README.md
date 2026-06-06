@@ -18,6 +18,9 @@
 - PDF 草稿上传与本地存储。
 - 分析任务创建、后台执行、状态查询。
 - 基于 Agno 的论文草稿分析代理。
+- 基于 `source/common-problems-for-students.md` 的分层逐项校验：规则层优先、文本模型补充、图表视觉模型可选。
+- 长论文文本分析采用“局部页批次审阅 + 全文梗概复核”，兼顾上下文完整性与 token 控制。
+- 分析结果优先展示论文印刷页码，并同时保留 PDF 物理页码，减少封面、目录、摘要等前置页导致的页码错位。
 - 站内通知查询与已读标记。
 - React + Vite 前端骨架，可用于后续联调。
 
@@ -100,6 +103,7 @@ cp .env.example .env
 - `LLM_MODEL_ID`
 - `LLM_API_KEY`
 - `LLM_BASE_URL`（使用兼容网关时）
+- `VISION_LLM_MODEL_ID`、`VISION_LLM_API_KEY`、`VISION_LLM_BASE_URL`（需要自动做图表视觉检查时）
 - `LOG_LEVEL`
 - `REFERENCE_DOC_PATH`
 
@@ -165,10 +169,22 @@ npm run dev
 | `LLM_MODEL_ID` | `gpt-4o-mini` | 模型标识 |
 | `LLM_API_KEY` | 空 | 模型访问密钥 |
 | `LLM_BASE_URL` | 空 | OpenAI-compatible 网关地址 |
+| `VISION_LLM_PROVIDER` | 跟随 `LLM_PROVIDER` | 视觉模型提供方 |
+| `VISION_LLM_MODEL_ID` | 空 | 图表视觉检查专用模型；为空时图表视觉类条目仅标记为待人工复核 |
+| `VISION_LLM_API_KEY` | 跟随 `LLM_API_KEY` | 视觉模型访问密钥 |
+| `VISION_LLM_BASE_URL` | 跟随 `LLM_BASE_URL` | 视觉模型网关地址 |
 | `LOG_LEVEL` | `DEBUG` | 应用日志级别 |
 | `REFERENCE_DOC_PATH` | `source/common-problems-for-students.md` | 参考规范文档，仅支持 `.md/.txt` |
-| `MAX_PAGES` | `30` | 单次分析最多读取页数 |
+| `MAX_PAGES` | `120` | 单次分析允许的最大页数；超过该页数时任务直接失败，不再静默截断 |
 | `MAX_PAGE_CHARS` | `4000` | 单页截断字符数 |
+| `MAX_CHECK_ITEMS_PER_BATCH` | `8` | 文本/视觉模型每批次处理的清单项数量 |
+| `MAX_PAGES_PER_CHECK` | `6` | 每项文本检查最多检索的页数 |
+| `MAX_PAGES_PER_BATCH` | `12` | 单次文本模型批处理最多拼接的页数，避免长论文上下文过大 |
+| `MAX_PAGE_IMAGE_CANDIDATES` | `4` | 每项视觉检查最多渲染的候选页数 |
+| `MAX_IMAGE_PAGES_PER_BATCH` | `8` | 单次视觉模型批处理最多附带的页数 |
+| `LOCAL_REVIEW_PAGE_BATCH_SIZE` | `30` | 文本模型做局部段落审阅时的页批次大小 |
+| `SEGMENT_REVIEW_PAGE_CHARS` | `2000` | 局部段落审阅时，每页最多带入的摘要字符数 |
+| `GLOBAL_ANCHOR_PAGE_CHARS` | `500` | 全局梗概审阅时，每个锚点页最多带入的摘要字符数 |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:5173` | 允许跨域来源 |
 
 ## 已实现接口

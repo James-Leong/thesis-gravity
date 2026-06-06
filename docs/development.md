@@ -40,6 +40,11 @@ cp .env.example .env
 - `LLM_MODEL_ID`
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
+- `VISION_LLM_MODEL_ID`（如需启用图表视觉检查）
+- `VISION_LLM_API_KEY`
+- `VISION_LLM_BASE_URL`
+- `LOCAL_REVIEW_PAGE_BATCH_SIZE`
+- `MAX_CHECK_ITEMS_PER_BATCH`
 - `LOG_LEVEL`
 - `REFERENCE_DOC_PATH`
 
@@ -104,6 +109,14 @@ uv run ruff format .
 - 论文上传目录默认位于 `data/theses/{student_id}/`
 - 本地运行数据统一放在 `data/` 下
 - 上传的 PDF 会先做内容校验；无法解析、空白或纯图片扫描件会被拒绝，且不会保留无效文件
+- 论文分析会按 `source/common-problems-for-students.md` 自动拆分为规则层、文本模型层和图表视觉层，并返回逐项校验结果
+- 文本模型层不会再按零散小条目任意切批，而是优先按大的检查方向聚合请求，再在同一次模型返回中展开各个细分检查点，以减少模型调用次数
+- 文本模型与视觉模型请求会把论文片段放在用户输入最前面，并把变化更大的检查要求放在后部，以提高 provider prompt cache 命中率
+- 长论文会先按局部页批次做文本段落审阅，再基于全文梗概做一次整体逻辑复核，避免再次退化成单次超长上下文审阅
+- 如果 PDF 总页数超过 `MAX_PAGES`，分析任务会直接失败，并返回超页数错误，而不是只读取前若干页
+- 分析时会先建立“PDF 物理页 -> 论文印刷页码”的映射；返回结果优先展示论文页码，同时保留 PDF 页码用于定位原文件
+- 未配置 `VISION_LLM_MODEL_ID` 时，图表清晰度、坐标轴、排版等图表视觉类条目会标记为“待人工复核”
+- 每次分析任务会额外记录 LLM 调用摘要到 `analysis_tasks.llm_usage_summary_json`，并把每次模型调用的详细输入输出/耗时/token/cache 指标记录到 `analysis_llm_call_logs`，便于后续计费与调用分析
 
 ## 认证约定
 

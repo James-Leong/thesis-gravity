@@ -45,6 +45,24 @@ class Settings:
         self.llm_model_id = _getenv("LLM_MODEL_ID", "gpt-4o-mini")
         self.llm_api_key = _getenv("LLM_API_KEY", _getenv("OPENAI_API_KEY", ""))
         self.llm_base_url = _getenv("LLM_BASE_URL", _getenv("OPENAI_BASE_URL", ""))
+        self.vision_llm_provider = _getenv("VISION_LLM_PROVIDER", self.llm_provider)
+        self.vision_llm_model_id = _getenv("VISION_LLM_MODEL_ID", "")
+        self.vision_llm_api_key = _getenv(
+            "VISION_LLM_API_KEY",
+            _getenv("VISION_OPENAI_API_KEY", self.llm_api_key),
+        )
+        self.vision_llm_base_url = _getenv(
+            "VISION_LLM_BASE_URL",
+            _getenv("VISION_OPENAI_BASE_URL", self.llm_base_url),
+        )
+        self.max_check_items_per_batch = int(_getenv("MAX_CHECK_ITEMS_PER_BATCH", "64"))
+        self.max_pages_per_check = int(_getenv("MAX_PAGES_PER_CHECK", "6"))
+        self.max_page_image_candidates = int(_getenv("MAX_PAGE_IMAGE_CANDIDATES", "4"))
+        self.max_pages_per_batch = int(_getenv("MAX_PAGES_PER_BATCH", "12"))
+        self.max_image_pages_per_batch = int(_getenv("MAX_IMAGE_PAGES_PER_BATCH", "8"))
+        self.local_review_page_batch_size = int(_getenv("LOCAL_REVIEW_PAGE_BATCH_SIZE", "30"))
+        self.segment_review_page_chars = int(_getenv("SEGMENT_REVIEW_PAGE_CHARS", "2000"))
+        self.global_anchor_page_chars = int(_getenv("GLOBAL_ANCHOR_PAGE_CHARS", "500"))
 
         self.reference_doc_path = Path(
             _getenv(
@@ -52,10 +70,15 @@ class Settings:
                 str(self.base_dir / "source" / "common-problems-for-students.md"),
             )
         )
-        self.max_pages = int(_getenv("MAX_PAGES", "30"))
+        self.max_pages = int(_getenv("MAX_PAGES", "120"))
         self.max_page_chars = int(_getenv("MAX_PAGE_CHARS", "4000"))
         self.cors_origins = _csv(_getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"))
         self.log_level = _getenv("LOG_LEVEL", "DEBUG")
+        self.log_to_console = _bool(_getenv("LOG_TO_CONSOLE", "false"))
+        self.environment = _getenv("ENV", "development").lower()
+
+    def is_dev(self) -> bool:
+        return self.environment in {"development", "dev"}
 
 
 settings = Settings()
