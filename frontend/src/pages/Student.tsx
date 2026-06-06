@@ -22,8 +22,10 @@ export function Student({ user, authChecked }: StudentProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [ignoredIssues, setIgnoredIssues] = useState<Set<string>>(new Set());
   const [checksExpanded, setChecksExpanded] = useState(false);
+  const [readNotificationsExpanded, setReadNotificationsExpanded] = useState(false);
   const isDevMode = import.meta.env.DEV;
 
   // sync persisted ignored issues from backend
@@ -98,15 +100,12 @@ export function Student({ user, authChecked }: StudentProps) {
     }
   };
 
-  const handleNotifications = async () => {
-    setNotice(null);
-    setError(null);
+  const loadNotifications = async () => {
     if (!requireToken()) return;
-    setLoading(true);
+    setNotificationsLoading(true);
     try {
       const result = await apiFetch<Notification[]>("/notifications?unread_only=false");
       setNotifications(result);
-      setNotice("通知已加载。");
     } catch (err) {
       const message =
         typeof err === "object" && err !== null && "detail" in err
@@ -114,7 +113,7 @@ export function Student({ user, authChecked }: StudentProps) {
           : "加载通知失败。";
       setError(message);
     } finally {
-      setLoading(false);
+      setNotificationsLoading(false);
     }
   };
 
@@ -169,6 +168,7 @@ export function Student({ user, authChecked }: StudentProps) {
   useEffect(() => {
     if (!authChecked || !user || user.role !== "student") return;
     void loadTasks(false);
+    void loadNotifications();
   }, [authChecked, user]);
 
   useEffect(() => {
@@ -215,42 +215,40 @@ export function Student({ user, authChecked }: StudentProps) {
     return new Date(value).toLocaleString("zh-CN");
   };
 
+  const formatNotificationTitle = (value: string) => {
+    if (value === "Draft review completed") return "草稿分析已完成";
+    return value;
+  };
+
+  const formatNotificationBody = (value: string) => {
+    if (value === "Your draft review is ready in the system.") {
+      return "论文草稿分析结果已生成。";
+    }
+    return value;
+  };
+
   const isReadyForMentor = (t: AnalysisTask | null) =>
     !!t?.result?.ready_for_mentor || !!t?.student_ready_for_mentor;
 
-  const getTaskHeadline = () => {
+  const getCurrentPaperHint = () => {
     if (!task) {
-      return "还没有加载论文任务";
+      return "提交论文后会显示在这里。";
     }
     if (task.status === "completed" && isReadyForMentor(task)) {
-      return "当前稿件已经完成分析，可以考虑提交导师";
+      return "可以提交导师评审。";
     }
     if (task.status === "completed") {
-      return "当前稿件已经完成分析，建议先根据问题清单修改";
+      return priorityIssues.length > 0
+        ? `建议先处理 ${priorityIssues.length} 条重点问题。`
+        : "建议检查问题清单后提交新版本。";
     }
     if (task.status === "failed") {
-      return task.error_message || "当前稿件暂时未完成分析";
+      return "分析失败，可以重新提交或稍后查看。";
     }
     if (task.status === "running") {
-      return "系统正在分析你最新提交的论文草稿";
+      return "正在分析，完成后会自动更新。";
     }
-    return "任务已经创建，正在等待系统开始分析";
-  };
-
-  const getTaskNextAction = () => {
-    if (!task) {
-      return "如果你还没有提交论文，可以先上传新稿。提交后，这里会自动显示最新分析状态。";
-    }
-    if (task.status === "completed" && isReadyForMentor(task)) {
-      return "建议检查摘要和问题列表，确认无误后进入导师评审阶段。";
-    }
-    if (task.status === "completed") {
-      return "优先处理高严重度问题，修改完成后再提交新版本。";
-    }
-    if (task.status === "failed") {
-      return "建议稍后刷新一次；如果仍未完成，可以重新提交稿件。";
-    }
-    return "稍后刷新状态，等待系统返回完整分析结果。";
+    return "等待开始分析。";
   };
 
   const getTaskLabel = (item: AnalysisTask | null) => {
@@ -274,6 +272,13 @@ export function Student({ user, authChecked }: StudentProps) {
     return "低";
   };
 
+  const getSeverityClassName = (severity: string) => {
+    const s = severity.toLowerCase();
+    if (s.includes("高") || s.includes("high")) return "severity-high";
+    if (s.includes("中") || s.includes("medium")) return "severity-medium";
+    return "severity-low";
+  };
+
   const severityOrder = (severity: string) => {
     const s = severity.toLowerCase();
     if (s.includes("高") || s.includes("high")) return 0;
@@ -291,6 +296,19 @@ export function Student({ user, authChecked }: StudentProps) {
         return "待人工复核";
       default:
         return status;
+    }
+  };
+
+  const getCheckStatusClassName = (status: string) => {
+    switch (status) {
+      case "passed":
+        return "check-status-passed";
+      case "failed":
+        return "check-status-failed";
+      case "needs_manual_review":
+        return "check-status-manual";
+      default:
+        return "";
     }
   };
 
@@ -382,6 +400,47 @@ export function Student({ user, authChecked }: StudentProps) {
   const latestTask = historyTasks[0] ?? null;
   const hasActiveTask =
     !!latestTask && (latestTask.status === "pending" || latestTask.status === "running");
+  const result = task?.result ?? null;
+  const layerSummaries = result?.layer_summaries ?? [];
+  const summaryChecks = layerSummaries.reduce((total, layer) => total + layer.total, 0);
+  const failedChecks = layerSummaries.reduce((total, layer) => total + layer.failed, 0);
+  const manualReviewChecks = layerSummaries.reduce(
+    (total, layer) => total + layer.needs_manual_review,
+    0
+  );
+  const indexedIssues =
+    result?.issues.map((issue, idx) => ({
+      ...issue,
+      _origIdx: idx,
+      _key: `${issue.page}-${issue.issue_type}-${idx}`,
+    })) ?? [];
+  const visibleIssues = indexedIssues
+    .filter((issue) => !ignoredIssues.has(issue._key))
+    .sort(
+      (a, b) => severityOrder(a.severity) - severityOrder(b.severity) || a._origIdx - b._origIdx
+    );
+  const priorityIssues = visibleIssues.filter((issue) => !isLowSeverity(issue.severity));
+  const allPriorityIssuesCleared = priorityIssues.length === 0;
+  const unreadNotifications = notifications.filter((item) => !item.is_read);
+  const readNotifications = notifications.filter((item) => item.is_read);
+
+  const renderNotification = (item: Notification) => (
+    <div
+      key={item.id}
+      className={`notification-item ${item.is_read ? "is-read" : "is-unread"}`}
+    >
+      <strong>{formatNotificationTitle(item.title)}</strong>
+      <p className="meta">{formatNotificationBody(item.body)}</p>
+      <p className="meta">{formatTime(item.created_at)}</p>
+      {!item.is_read ? (
+        <button className="ghost" onClick={() => markRead(item.id)}>
+          标记已读
+        </button>
+      ) : (
+        <span className="notification-read-state">已读</span>
+      )}
+    </div>
+  );
 
   return (
     <section className="section">
@@ -389,29 +448,11 @@ export function Student({ user, authChecked }: StudentProps) {
       {!authChecked ? <div className="notice">正在检查登录状态...</div> : null}
       <div className="student-dashboard">
         <div className="card dashboard-hero">
-          <div className="dashboard-hero-copy">
-            <p className="eyebrow">当前状态</p>
-            <h3>{getTaskHeadline()}</h3>
-            <p className="meta">{getTaskNextAction()}</p>
-          </div>
-          <div className="dashboard-hero-stats">
-            <div className="task-meta-card">
-              <span className="meta">当前稿件</span>
-              <strong>{getTaskLabel(task)}</strong>
-            </div>
-            <div className="task-meta-card">
-              <span className="meta">分析状态</span>
-              <strong>{task ? formatTaskStatus(task.status) : "暂无"}</strong>
-            </div>
-            <div className="task-meta-card">
-              <span className="meta">导师提交建议</span>
-              <strong>
-                {task?.result
-                  ? isReadyForMentor(task)
-                    ? "可以提交导师"
-                    : "建议先修改"
-                  : "等待分析结果"}
-              </strong>
+          <div className="dashboard-hero-bar">
+            <div className="dashboard-hero-copy">
+              <p className="eyebrow">当前处理论文</p>
+              <h3>{task ? getTaskLabel(task) : "暂无处理中的论文"}</h3>
+              <p className="meta">{getCurrentPaperHint()}</p>
             </div>
           </div>
         </div>
@@ -422,159 +463,215 @@ export function Student({ user, authChecked }: StudentProps) {
               <div className="section-heading compact">
                 <div>
                   <p className="eyebrow">当前稿件</p>
-                  <h3>论文状态总览</h3>
                 </div>
                 <span className={`task-badge task-${task?.status ?? "pending"}`}>
                   {task ? formatTaskStatus(task.status) : "未加载"}
                 </span>
               </div>
 
-              <div className="task-toolbar">
-                <div>
-                  <strong>{getTaskLabel(task)}</strong>
-                  <span className="meta" style={{ marginLeft: 8 }}>
-                    提交于 {formatTime(task?.created_at)}
-                  </span>
-                </div>
-                <button className="ghost" onClick={handleTaskRefresh} disabled={loading}>
-                  刷新状态
-                </button>
-                <button className="ghost" onClick={() => void loadTasks()} disabled={loading}>
-                  刷新历史
-                </button>
-              </div>
-
               {task ? (
                 <div className="task-detail">
                   <div className="task-meta-grid">
                     <div className="task-meta-card">
-                      <span className="meta">开始时间</span>
+                      <span className="meta">提交时间</span>
+                      <strong>{formatTime(task.created_at)}</strong>
+                    </div>
+                    <div className="task-meta-card">
+                      <span className="meta">开始分析</span>
                       <strong>{formatTime(task.started_at)}</strong>
                     </div>
                     <div className="task-meta-card">
                       <span className="meta">完成时间</span>
                       <strong>{formatTime(task.finished_at)}</strong>
                     </div>
+                    <div className="task-meta-card">
+                      <span className="meta">导师阶段</span>
+                      <strong>
+                        {result
+                          ? isReadyForMentor(task)
+                            ? "可以提交导师"
+                            : "建议修改后提交"
+                          : "等待分析结果"}
+                      </strong>
+                    </div>
                   </div>
 
-                  {task.result ? (
+                  {result ? (
                     <div className="task-result-stack">
-                      <div className="task-summary-card">
-                        <h4>AI 分析摘要</h4>
-                        <p>{task.result.summary}</p>
-                        {task.result.global_summary && (
-                          <p className="meta">全文整体复核：{task.result.global_summary}</p>
-                        )}
-                        {task.result.visual_summary && (
-                          <p className="meta">图表视觉复核：{task.result.visual_summary}</p>
-                        )}
-                        <p className="meta">总体评估：{task.result.overall_assessment}</p>
-                        <p className="meta">
-                          下一步判断：{isReadyForMentor(task) ? "可以进入导师评审" : "建议继续修改后再提交"}
-                        </p>
-                        {task.result.layer_summaries.length > 0 && (
-                          <div className="issue-list" style={{ marginTop: 12 }}>
-                            {task.result.layer_summaries.map((layer) => (
-                              <div key={layer.layer} className="issue-item">
-                                <div className="issue-row">
-                                  <strong>{formatLayerLabel(layer.layer)}</strong>
-                                  <span className="issue-severity">
-                                    {layer.passed}/{layer.total} 通过
-                                  </span>
-                                </div>
-                                <p className="meta">
-                                  未通过 {layer.failed} 项，待人工复核 {layer.needs_manual_review} 项
-                                </p>
-                              </div>
-                            ))}
+                      <div className="task-overview-grid">
+                        <div className="task-summary-card overview-highlight">
+                          <p className="eyebrow">核心结论</p>
+                          <h4>{result.summary}</h4>
+                          <p className="meta">总体评估：{result.overall_assessment}</p>
+                          <p className="meta">
+                            下一步判断：
+                            {isReadyForMentor(task) ? "可以进入导师评审" : "建议继续修改后再提交"}
+                          </p>
+                        </div>
+                        <div className="task-summary-card overview-metrics">
+                          <div className="overview-metric">
+                            <span className="meta">检查总数</span>
+                            <strong>{summaryChecks || result.checks.length}</strong>
                           </div>
-                        )}
+                          <div className="overview-metric">
+                            <span className="meta">未通过</span>
+                            <strong>{failedChecks}</strong>
+                          </div>
+                          <div className="overview-metric">
+                            <span className="meta">待人工复核</span>
+                            <strong>{manualReviewChecks}</strong>
+                          </div>
+                          <div className="overview-metric">
+                            <span className="meta">重点问题</span>
+                            <strong>{priorityIssues.length}</strong>
+                          </div>
+                        </div>
                       </div>
 
+                      {(result.global_summary || result.visual_summary || layerSummaries.length > 0) && (
+                        <div className="task-summary-card">
+                          <h4>分析视角</h4>
+                          <div className="analysis-insight-grid">
+                            {result.global_summary ? (
+                              <div className="issue-item">
+                                <strong>全文整体复核</strong>
+                                <p className="meta">{result.global_summary}</p>
+                              </div>
+                            ) : null}
+                            {result.visual_summary ? (
+                              <div className="issue-item">
+                                <strong>图表视觉复核</strong>
+                                <p className="meta">{result.visual_summary}</p>
+                              </div>
+                            ) : null}
+                          </div>
+                          {layerSummaries.length > 0 ? (
+                            <div className="layer-summary-grid">
+                              {layerSummaries.map((layer) => (
+                                <div key={layer.layer} className="issue-item">
+                                  <div className="issue-row">
+                                    <strong>{formatLayerLabel(layer.layer)}</strong>
+                                    <span className="issue-severity">
+                                      {layer.passed}/{layer.total} 通过
+                                    </span>
+                                  </div>
+                                  <p className="meta">
+                                    未通过 {layer.failed} 项，待人工复核 {layer.needs_manual_review} 项
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+
                       <div className="task-summary-card">
-                        <h4>问题与修改建议</h4>
-                        {task.result.issues.length === 0 ? (
+                        <div className="section-heading compact">
+                          <div>
+                            <h4>问题与修改建议</h4>
+                          </div>
+                          <span className="issue-count-pill">{visibleIssues.length} 条待处理</span>
+                        </div>
+
+                        {result.issues.length === 0 ? (
                           <p className="meta">当前没有识别到明确问题，可以结合导师意见或自查后再决定是否提交。</p>
                         ) : (
                           <div className="issue-list">
-                            {(() => {
-                              const indexedIssues = task.result!.issues.map((issue, idx) => ({ ...issue, _origIdx: idx }));
-                              const sortedIssues = [...indexedIssues]
-                                .filter((issue) => !ignoredIssues.has(`${issue.page}-${issue.issue_type}-${issue._origIdx}`))
-                                .sort((a, b) => severityOrder(a.severity) - severityOrder(b.severity) || a._origIdx - b._origIdx);
-                              const highMediumCount = sortedIssues.filter(
-                                (i) => !isLowSeverity(i.severity)
-                              ).length;
-                              const allCleared = highMediumCount === 0;
-                              return (
-                                <>
-                                  {sortedIssues.length === 0 ? (
-                                    <p className="meta">所有问题已处理或忽略。</p>
-                                  ) : (
-                                    sortedIssues.map((issue) => {
-                                      const key = `${issue.page}-${issue.issue_type}-${issue._origIdx}`;
-                                      const low = isLowSeverity(issue.severity);
-                                      return (
-                                        <div key={key} className="issue-item">
-                                          <div className="issue-row">
-                                            <strong>
-                                              {formatIssuePage(issue.page, issue.page_label, issue.pdf_page)} · {issue.issue_type}
-                                            </strong>
-                                            <span className="issue-severity">{formatSeverity(issue.severity)}</span>
-                                          </div>
-                                          <p>{issue.description}</p>
-                                          <p className="meta">建议修改：{issue.suggestion}</p>
-                                          {(low || isDevMode) && (
-                                            <button
-                                              className="ghost"
-                                              style={{ marginTop: 8, fontSize: 12 }}
-                                              onClick={() => toggleIgnoreIssue(key)}
-                                              disabled={loading}
-                                            >
-                                              忽略此问题{isDevMode && !low ? " (开发)" : ""}
-                                            </button>
-                                          )}
-                                        </div>
-                                      );
-                                    })
-                                  )}
-                                  {allCleared && !isReadyForMentor(task) && (
-                                    <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--stroke)" }}>
-                                      <p className="meta">所有中高优先级问题已处理，可以提交进入导师评审。</p>
-                                      <button
-                                        className="primary"
-                                        onClick={handleSubmitForMentor}
-                                        disabled={loading}
-                                        style={{ marginTop: 8 }}
-                                      >
-                                        提交进入导师评审
-                                      </button>
+                            {visibleIssues.length === 0 ? (
+                              <p className="meta">所有问题已处理或忽略。</p>
+                            ) : (
+                              visibleIssues.map((issue) => {
+                                const low = isLowSeverity(issue.severity);
+                                return (
+                                  <div key={issue._key} className="issue-item issue-card">
+                                    <div className="issue-row">
+                                      <strong>
+                                        {formatIssuePage(
+                                          issue.page,
+                                          issue.page_label,
+                                          issue.pdf_page
+                                        )}{" "}
+                                        · {issue.issue_type}
+                                      </strong>
+                                    <span
+                                      className={`issue-severity ${getSeverityClassName(
+                                        issue.severity
+                                      )}`}
+                                    >
+                                      {formatSeverity(issue.severity)}
+                                    </span>
                                     </div>
-                                  )}
-                                </>
-                              );
-                            })()}
+                                    <p>{issue.description}</p>
+                                    <p className="meta">建议修改：{issue.suggestion}</p>
+                                    {(low || isDevMode) && (
+                                      <button
+                                        className="ghost"
+                                        style={{ marginTop: 8, fontSize: 12 }}
+                                        onClick={() => toggleIgnoreIssue(issue._key)}
+                                        disabled={loading}
+                                      >
+                                        忽略此问题{isDevMode && !low ? " (开发)" : ""}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })
+                            )}
+                            {allPriorityIssuesCleared && !isReadyForMentor(task) ? (
+                              <div className="mentor-submit-panel">
+                                <p className="meta">
+                                  所有中高优先级问题已处理，可以提交进入导师评审。
+                                </p>
+                                <button
+                                  className="primary"
+                                  onClick={handleSubmitForMentor}
+                                  disabled={loading}
+                                >
+                                  提交进入导师评审
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         )}
                       </div>
 
                       <div className="task-summary-card">
-                        <h4 style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }} onClick={() => setChecksExpanded((v) => !v)}>
+                        <h4
+                          style={{
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                          onClick={() => setChecksExpanded((v) => !v)}
+                        >
                           <span>{checksExpanded ? "▾" : "▸"} 逐项校验结果</span>
-                          <span style={{ fontSize: 12, color: "var(--muted)", marginLeft: "auto" }}>
-                            {task.result.checks.length} 项
+                          <span
+                            style={{
+                              fontSize: 12,
+                              color: "var(--muted)",
+                              marginLeft: "auto",
+                            }}
+                          >
+                            {result.checks.length} 项
                           </span>
                         </h4>
-                        {checksExpanded && (
-                          task.result.checks.length === 0 ? (
+                        {checksExpanded ? (
+                          result.checks.length === 0 ? (
                             <p className="meta">当前没有返回逐项校验明细。</p>
                           ) : (
                             <div className="issue-list">
-                              {task.result.checks.map((check) => (
+                              {result.checks.map((check) => (
                                 <div key={check.check_id} className="issue-item">
                                   <div className="issue-row">
                                     <strong>{check.title}</strong>
-                                    <span className="issue-severity">{formatCheckStatus(check.status)}</span>
+                                    <span
+                                      className={`issue-severity ${getCheckStatusClassName(
+                                        check.status
+                                      )}`}
+                                    >
+                                      {formatCheckStatus(check.status)}
+                                    </span>
                                   </div>
                                   <p className="meta">
                                     {formatLayerLabel(check.layer)} · {check.source_section}
@@ -582,16 +679,21 @@ export function Student({ user, authChecked }: StudentProps) {
                                   <p>{check.requirement}</p>
                                   <p className="meta">判定依据：{check.rationale}</p>
                                   <p className="meta">建议处理：{check.suggestion}</p>
-                                  {check.pages.length > 0 && (
+                                  {check.pages.length > 0 ? (
                                     <p className="meta">
-                                      涉及页码：{formatCheckPages(check.pages, check.page_labels, check.pdf_pages)}
+                                      涉及页码：
+                                      {formatCheckPages(
+                                        check.pages,
+                                        check.page_labels,
+                                        check.pdf_pages
+                                      )}
                                     </p>
-                                  )}
+                                  ) : null}
                                 </div>
-                            ))}
-                          </div>
-                        )
-                      )}
+                              ))}
+                            </div>
+                          )
+                        ) : null}
                       </div>
                     </div>
                   ) : task.status === "failed" ? (
@@ -602,14 +704,18 @@ export function Student({ user, authChecked }: StudentProps) {
                   ) : (
                     <div className="task-summary-card">
                       <h4>等待分析结果</h4>
-                      <p className="meta">任务还没有返回结构化结果。你可以过一会刷新，或者先查看通知中心。</p>
+                      <p className="meta">
+                        任务还没有返回结构化结果。你可以过一会刷新，或者先查看通知中心。
+                      </p>
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="task-empty">
                   <h4>还没有加载任何任务</h4>
-                  <p className="meta">如果这是第一次提交，可以直接在右侧上传新稿。提交后，这里会自动显示分析进度和修改建议。</p>
+                  <p className="meta">
+                    如果这是第一次提交，可以直接在右侧上传新稿。提交后，这里会自动显示分析进度和修改建议。
+                  </p>
                 </div>
               )}
             </div>
@@ -619,8 +725,7 @@ export function Student({ user, authChecked }: StudentProps) {
             <div className="card">
               <div className="section-heading compact">
                 <div>
-                  <p className="eyebrow">快速操作</p>
-                  <h3>提交新稿</h3>
+                  <p className="eyebrow">提交新稿</p>
                 </div>
               </div>
               {hasActiveTask ? (
@@ -629,7 +734,7 @@ export function Student({ user, authChecked }: StudentProps) {
                   <p className="meta">请等待当前分析完成后再提交新稿。</p>
                 </div>
               ) : (
-                <form className="form" onSubmit={handleDraftSubmit}>
+                <form className="form draft-form" onSubmit={handleDraftSubmit}>
                   <div>
                     <label htmlFor="draft-title">标题</label>
                     <input
@@ -642,16 +747,22 @@ export function Student({ user, authChecked }: StudentProps) {
                   </div>
                   <div>
                     <label htmlFor="draft-file">PDF 文件</label>
-                    <input
-                      id="draft-file"
-                      type="file"
-                      accept="application/pdf"
-                      onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                      required
-                    />
+                    <label htmlFor="draft-file" className="file-upload">
+                      <input
+                        id="draft-file"
+                        className="file-input"
+                        type="file"
+                        accept="application/pdf"
+                        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                        required
+                      />
+                      <span className={`file-upload-name ${file ? "has-file" : ""}`}>
+                        {file ? file.name : "未选择任何文件"}
+                      </span>
+                    </label>
                   </div>
                   <button className="primary" type="submit" disabled={loading}>
-                    {loading ? "正在提交..." : "提交新稿"}
+                    {loading ? "正在提交..." : "提交"}
                   </button>
                 </form>
               )}
@@ -661,31 +772,39 @@ export function Student({ user, authChecked }: StudentProps) {
               <div className="section-heading compact">
                 <div>
                   <p className="eyebrow">通知中心</p>
-                  <h3>最近提醒</h3>
                 </div>
-                <button className="ghost" onClick={handleNotifications} disabled={loading}>
-                  加载通知
-                </button>
               </div>
 
               <div className="form">
-                {notifications.length === 0 ? (
-                  <p className="meta">暂时还没有加载通知。</p>
+                {notificationsLoading && notifications.length === 0 ? (
+                  <p className="meta">正在加载通知...</p>
+                ) : notifications.length === 0 ? (
+                  <p className="meta">暂无通知。</p>
                 ) : (
-                  notifications.map((item) => (
-                    <div key={item.id} className="notice">
-                      <strong>{item.title}</strong>
-                      <p className="meta">{item.body}</p>
-                      <p className="meta">{item.created_at}</p>
-                      {!item.is_read ? (
-                        <button className="ghost" onClick={() => markRead(item.id)}>
-                          标记已读
+                  <>
+                    {unreadNotifications.length > 0 ? (
+                      unreadNotifications.map(renderNotification)
+                    ) : (
+                      <p className="meta">暂无未读通知。</p>
+                    )}
+                    {readNotifications.length > 0 ? (
+                      <div className="read-notification-group">
+                        <button
+                          type="button"
+                          className="read-notification-toggle"
+                          onClick={() => setReadNotificationsExpanded((value) => !value)}
+                        >
+                          <span>{readNotificationsExpanded ? "收起已读通知" : "已读通知"}</span>
+                          <span>{readNotifications.length} 条</span>
                         </button>
-                      ) : (
-                        <span className="meta">已读</span>
-                      )}
-                    </div>
-                  ))
+                        {readNotificationsExpanded ? (
+                          <div className="read-notification-list">
+                            {readNotifications.map(renderNotification)}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
                 )}
               </div>
             </div>
@@ -694,7 +813,6 @@ export function Student({ user, authChecked }: StudentProps) {
               <div className="section-heading compact">
                 <div>
                   <p className="eyebrow">历史任务</p>
-                  <h3>最近提交记录</h3>
                 </div>
               </div>
 
