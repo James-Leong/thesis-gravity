@@ -1,6 +1,8 @@
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from pydantic import ValidationError
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
 
@@ -24,14 +26,18 @@ from app.db import get_db
 from app.deps import require_roles
 from app.models import AnalysisTask, MentorRelation, Thesis, ThesisVersion
 from app.routers.tasks import _build_task_read
+from app.schemas.analysis import AnalysisLLMUsageSummary
 from app.schemas.thesis import (
     AnalysisTaskRead,
     DraftSubmissionResponse,
+    StudentUsagePeriodRead,
+    StudentUsageStatsRead,
     ThesisVersionTaskRead,
     ThesisWorkspaceRead,
 )
 from app.services.analysis import run_analysis_task
 from app.services.file_uploads import remove_uploaded_file, save_pdf, validate_pdf_content
+from app.utils.datetime import utcnow
 
 router = APIRouter(prefix="/theses", tags=["theses"])
 
@@ -74,6 +80,90 @@ def _build_thesis_workspace_read(thesis: Thesis) -> ThesisWorkspaceRead:
     )
 
 
+def _month_range(reference: datetime) -> tuple[datetime, datetime]:
+    month_start = reference.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+    return month_start, next_month_start
+
+
+def _normalize_datetime_for_compare(value: datetime, reference: datetime | None = None) -> datetime:
+    if reference is None:
+        return value
+    if value.tzinfo is None and reference.tzinfo is not None:
+        return value.replace(tzinfo=reference.tzinfo)
+    if value.tzinfo is not None and reference.tzinfo is None:
+        return value.replace(tzinfo=None)
+    return value
+
+
+def _build_usage_period(
+    tasks: list[AnalysisTask],
+    *,
+    period_start: datetime | None,
+    period_end: datetime | None,
+) -> StudentUsagePeriodRead:
+    task_count = 0
+    task_with_usage_count = 0
+    total_calls = 0
+    completed_calls = 0
+    failed_calls = 0
+    input_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    cache_read_tokens = 0
+    cache_write_tokens = 0
+    reasoning_tokens = 0
+    total_duration_ms = 0
+
+    for task in tasks:
+        created_at = _normalize_datetime_for_compare(task.created_at, period_start or period_end)
+        if period_start and created_at < period_start:
+            continue
+        if period_end and created_at >= period_end:
+            continue
+
+        task_count += 1
+        if not isinstance(task.llm_usage_summary_json, dict):
+            continue
+
+        try:
+            usage = AnalysisLLMUsageSummary.model_validate(task.llm_usage_summary_json)
+        except ValidationError:
+            continue
+
+        task_with_usage_count += 1
+        total_calls += usage.total_calls
+        completed_calls += usage.completed_calls
+        failed_calls += usage.failed_calls
+        input_tokens += usage.input_tokens
+        output_tokens += usage.output_tokens
+        total_tokens += usage.total_tokens
+        cache_read_tokens += usage.cache_read_tokens
+        cache_write_tokens += usage.cache_write_tokens
+        reasoning_tokens += usage.reasoning_tokens
+        total_duration_ms += usage.total_duration_ms
+
+    return StudentUsagePeriodRead(
+        period_start=period_start,
+        period_end=period_end,
+        task_count=task_count,
+        task_with_usage_count=task_with_usage_count,
+        total_calls=total_calls,
+        completed_calls=completed_calls,
+        failed_calls=failed_calls,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        reasoning_tokens=reasoning_tokens,
+        total_duration_ms=total_duration_ms,
+    )
+
+
 @router.get("", response_model=list[ThesisWorkspaceRead])
 def list_theses(
     current_user=Depends(require_roles(ROLE_STUDENT)),
@@ -87,6 +177,32 @@ def list_theses(
         .all()
     )
     return [_build_thesis_workspace_read(thesis) for thesis in theses]
+
+
+@router.get("/usage-stats", response_model=StudentUsageStatsRead)
+def get_usage_stats(
+    current_user=Depends(require_roles(ROLE_STUDENT)),
+    db: Session = Depends(get_db),
+) -> StudentUsageStatsRead:
+    tasks = (
+        db.query(AnalysisTask)
+        .join(AnalysisTask.version)
+        .join(ThesisVersion.thesis)
+        .filter(Thesis.student_id == current_user.id)
+        .order_by(AnalysisTask.created_at.desc())
+        .all()
+    )
+    generated_at = utcnow()
+    month_start, next_month_start = _month_range(generated_at)
+    return StudentUsageStatsRead(
+        generated_at=generated_at,
+        current_month=_build_usage_period(
+            tasks,
+            period_start=month_start,
+            period_end=next_month_start,
+        ),
+        all_time=_build_usage_period(tasks, period_start=None, period_end=None),
+    )
 
 
 @router.post("/drafts", response_model=DraftSubmissionResponse)

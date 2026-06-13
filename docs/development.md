@@ -119,6 +119,7 @@ uv run ruff format .
 - 分析时会先建立“PDF 物理页 -> 论文印刷页码”的映射；返回结果优先展示论文页码，同时保留 PDF 页码用于定位原文件
 - 未配置 `VISION_LLM_MODEL_ID` 时，图表清晰度、坐标轴、排版等图表视觉类条目会标记为“待人工复核”
 - 每次分析任务会额外记录 LLM 调用摘要到 `analysis_tasks.llm_usage_summary_json`，并把每次模型调用的详细输入输出/耗时/token/cache 指标记录到 `analysis_llm_call_logs`，便于后续计费与调用分析
+- 学生可通过 `GET /theses/usage-stats` 查看个人 AI 用量汇总；当前口径只做调用统计，不做费用换算
 - 学生工作台现在按“论文任务”组织：`POST /theses/drafts` 首次提交会创建新论文任务；后续提交同一篇论文时携带 `thesis_id`，会在原论文下新增版本，而不是新建一条独立任务
 - 论文状态建议按 `analysis_pending`（AI 处理中）→ `analysis_done`（待提交导师）→ `mentor_review`（导师审核中）→ `approved`（已完成）流转；若导师退回，则切到 `changes_requested`（待修改），学生上传新版本后重新回到 `analysis_pending`
 - 学生处理完分析问题后可通过 `/tasks/{task_id}/submit-for-mentor` 将当前最新版本提交导师评审；论文进入 `mentor_review` 后，学生不能再次提交新版本，必须等待导师给出通过或退回结果

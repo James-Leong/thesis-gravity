@@ -57,6 +57,34 @@ export type AnalysisResult = {
   ready_for_mentor: boolean;
 };
 
+export type AnalysisLLMUsagePhaseSummary = {
+  phase: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  total_duration_ms: number;
+};
+
+export type AnalysisLLMUsageSummary = {
+  total_calls: number;
+  completed_calls: number;
+  failed_calls: number;
+  total_input_chars: number;
+  total_output_chars: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  total_duration_ms: number;
+  average_duration_ms: number;
+  estimated_cache_hit_rate?: number | null;
+  phases: AnalysisLLMUsagePhaseSummary[];
+};
+
 export type AnalysisTask = {
   id: number;
   thesis_id?: number | null;
@@ -64,12 +92,36 @@ export type AnalysisTask = {
   thesis_title?: string | null;
   status: string;
   result: AnalysisResult | null;
+  llm_usage_summary?: AnalysisLLMUsageSummary | null;
   error_message?: string | null;
   created_at?: string | null;
   started_at?: string | null;
   finished_at?: string | null;
   student_ready_for_mentor?: boolean;
   ignored_issue_keys?: string[] | null;
+};
+
+export type StudentUsagePeriod = {
+  period_start?: string | null;
+  period_end?: string | null;
+  task_count: number;
+  task_with_usage_count: number;
+  total_calls: number;
+  completed_calls: number;
+  failed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  reasoning_tokens: number;
+  total_duration_ms: number;
+};
+
+export type StudentUsageStats = {
+  generated_at: string;
+  current_month: StudentUsagePeriod;
+  all_time: StudentUsagePeriod;
 };
 
 export type MentorReview = {

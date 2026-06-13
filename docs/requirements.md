@@ -54,11 +54,13 @@
 - [ ] 每项检查都返回明确状态（通过 / 未通过 / 待人工复核）与依据说明。
 - [ ] 任务状态变迁：pending -> running -> completed/failed。
 - [ ] 结果持久化至 AnalysisTask.result_json。
+- [ ] 每次分析任务额外记录 AI 调用统计摘要，至少包含调用次数、输入/输出/总 token、缓存命中相关 token 与耗时。
 - [ ] 成功时生成通知给学生。
 - [ ] 失败时记录错误信息。
 
 ### 5.4 任务状态查询
 - [ ] 任务查询返回当前状态与结果。
+- [ ] 学生工作台可查看单次分析任务消耗，以及个人累计 / 本月累计 AI 消耗统计。
 - [ ] 学生只能访问自己的任务。
 - [ ] 导师、教务、管理员可访问更广范围任务。
 
@@ -82,6 +84,7 @@
 - [x] /auth/logout
 - [x] /auth/me
 - [x] /theses/drafts
+- [x] /theses/usage-stats
 - [x] /tasks
 - [x] /tasks/{task_id}
 - [x] /notifications

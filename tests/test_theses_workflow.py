@@ -1,3 +1,4 @@
+from datetime import timedelta
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from app.core.security import create_access_token, hash_password
 from app.db import SessionLocal, init_db
 from app.main import app
 from app.models import AnalysisTask, MentorRelation, MentorReview, Notification, Thesis, ThesisVersion, User
+from app.utils.datetime import utcnow
 
 client = TestClient(app)
 
@@ -55,6 +57,8 @@ def _create_version(
     *,
     ready: bool,
     file_path: str = "data/test-version.pdf",
+    llm_usage_summary_json: dict | None = None,
+    created_at=None,
 ) -> ThesisVersion:
     db = SessionLocal()
     managed_thesis = db.get(Thesis, thesis.id)
@@ -77,7 +81,9 @@ def _create_version(
             "checks": [],
             "layer_summaries": [],
         },
+        llm_usage_summary_json=llm_usage_summary_json,
         student_ready_for_mentor=ready,
+        created_at=created_at or utcnow(),
     )
     db.add(task)
     db.commit()
@@ -203,3 +209,78 @@ class TestThesisWorkflow:
         assert len(payload) == 1
         assert payload[0]["version"]["id"] == latest_version.id
         assert payload[0]["version"]["version_no"] == 2
+
+    def test_student_usage_stats_include_all_time_and_current_month(self):
+        student = _create_user("student@example.com", "student")
+        token = create_access_token(str(student.id))
+
+        db = SessionLocal()
+        thesis = Thesis(student_id=student.id, title="Usage Thesis", status=THESIS_STATUS_ANALYSIS_PENDING)
+        db.add(thesis)
+        db.commit()
+        db.refresh(thesis)
+        db.close()
+
+        now = utcnow()
+        previous_month = (now.replace(day=1) - timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+        _create_version(
+            thesis,
+            1,
+            ready=False,
+            llm_usage_summary_json={
+                "total_calls": 2,
+                "completed_calls": 2,
+                "failed_calls": 0,
+                "total_input_chars": 1000,
+                "total_output_chars": 200,
+                "input_tokens": 120,
+                "output_tokens": 30,
+                "total_tokens": 150,
+                "cache_read_tokens": 40,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_duration_ms": 800,
+                "average_duration_ms": 400,
+                "estimated_cache_hit_rate": 0.3333,
+                "phases": [],
+            },
+            created_at=previous_month,
+        )
+        _create_version(
+            thesis,
+            2,
+            ready=False,
+            llm_usage_summary_json={
+                "total_calls": 3,
+                "completed_calls": 3,
+                "failed_calls": 0,
+                "total_input_chars": 2000,
+                "total_output_chars": 300,
+                "input_tokens": 180,
+                "output_tokens": 45,
+                "total_tokens": 225,
+                "cache_read_tokens": 60,
+                "cache_write_tokens": 10,
+                "reasoning_tokens": 5,
+                "total_duration_ms": 1200,
+                "average_duration_ms": 400,
+                "estimated_cache_hit_rate": 0.3333,
+                "phases": [],
+            },
+            created_at=now,
+        )
+
+        response = client.get("/theses/usage-stats", headers=_auth_headers(token))
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["current_month"]["task_count"] == 1
+        assert payload["current_month"]["task_with_usage_count"] == 1
+        assert payload["current_month"]["total_calls"] == 3
+        assert payload["current_month"]["total_tokens"] == 225
+        assert payload["all_time"]["task_count"] == 2
+        assert payload["all_time"]["task_with_usage_count"] == 2
+        assert payload["all_time"]["total_calls"] == 5
+        assert payload["all_time"]["total_tokens"] == 375
+        assert payload["all_time"]["cache_read_tokens"] == 100

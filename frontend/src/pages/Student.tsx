@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  AnalysisLLMUsageSummary,
   AnalysisTask,
   DraftResponse,
   Notification,
+  StudentUsageStats,
   ThesisVersionTask,
   ThesisWorkspace,
   UserRead,
@@ -22,10 +24,12 @@ export function Student({ user, authChecked }: StudentProps) {
   const [selectedThesisId, setSelectedThesisId] = useState<number | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [usageStats, setUsageStats] = useState<StudentUsageStats | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [ignoredIssues, setIgnoredIssues] = useState<Set<string>>(new Set());
   const [checksExpanded, setChecksExpanded] = useState(false);
   const [readNotificationsExpanded, setReadNotificationsExpanded] = useState(false);
@@ -78,6 +82,23 @@ export function Student({ user, authChecked }: StudentProps) {
     }
   };
 
+  const loadUsageStats = async () => {
+    if (!requireToken()) return;
+    setUsageLoading(true);
+    try {
+      const result = await apiFetch<StudentUsageStats>("/theses/usage-stats");
+      setUsageStats(result);
+    } catch (err) {
+      const message =
+        typeof err === "object" && err !== null && "detail" in err
+          ? String((err as { detail: string }).detail)
+          : "加载 AI 使用统计失败。";
+      setError(message);
+    } finally {
+      setUsageLoading(false);
+    }
+  };
+
   const loadTheses = async (showNotice = true, thesisId?: number, versionId?: number) => {
     if (!requireToken()) return;
     setLoading(true);
@@ -122,6 +143,7 @@ export function Student({ user, authChecked }: StudentProps) {
     if (!authChecked || !user || user.role !== "student") return;
     void loadTheses(false);
     void loadNotifications();
+    void loadUsageStats();
   }, [authChecked, user]);
 
   useEffect(() => {
@@ -180,6 +202,7 @@ export function Student({ user, authChecked }: StudentProps) {
       const result = await apiForm<DraftResponse>("/theses/drafts", form);
       setFile(null);
       await loadTheses(false, result.thesis_id, result.version_id);
+      await loadUsageStats();
       setNotice(
         selectedThesis && selectedThesis.status !== "approved"
           ? "已提交论文新版本，AI 正在处理中。"
@@ -205,6 +228,7 @@ export function Student({ user, authChecked }: StudentProps) {
       return;
     }
     await loadTheses(true, selectedThesis.id, selectedVersion?.id);
+    await loadUsageStats();
   };
 
   const formatTaskStatus = (status: string) => {
@@ -429,6 +453,7 @@ export function Student({ user, authChecked }: StudentProps) {
     try {
       await apiFetch(`/tasks/${task.id}/submit-for-mentor`, { method: "POST" });
       await loadTheses(false, selectedThesis.id, selectedVersion?.id);
+      await loadUsageStats();
       setNotice("当前版本已提交导师审核。");
     } catch (err) {
       const message =
@@ -442,6 +467,9 @@ export function Student({ user, authChecked }: StudentProps) {
   };
 
   const result = task?.result ?? null;
+  const currentUsage = task?.llm_usage_summary ?? null;
+  const currentMonthUsage = usageStats?.current_month ?? null;
+  const allTimeUsage = usageStats?.all_time ?? null;
   const layerSummaries = result?.layer_summaries ?? [];
   const summaryChecks = layerSummaries.reduce((total, layer) => total + layer.total, 0);
   const failedChecks = layerSummaries.reduce((total, layer) => total + layer.failed, 0);
@@ -470,6 +498,168 @@ export function Student({ user, authChecked }: StudentProps) {
       selectedThesis.current_version.latest_task.status === "running");
   const uploadBlockedByReview = selectedThesis?.status === "mentor_review";
   const continueCurrentThesis = !!selectedThesis && selectedThesis.status !== "approved";
+
+  const formatTokenCount = (value?: number | null) => {
+    const safe = value ?? 0;
+    return new Intl.NumberFormat("zh-CN").format(safe);
+  };
+
+  const formatCompactTokenCount = (value?: number | null) => {
+    const safe = Math.max(0, value ?? 0);
+    if (safe < 1000) return String(safe);
+
+    const units = [
+      { value: 1_000_000_000, suffix: "G" },
+      { value: 1_000_000, suffix: "M" },
+      { value: 1_000, suffix: "K" },
+    ];
+
+    for (const unit of units) {
+      if (safe >= unit.value) {
+        const scaled = safe / unit.value;
+        const digits = scaled < 100 ? 1 : 0;
+        return `${scaled.toFixed(digits).replace(/\.0$/, "")}${unit.suffix}`;
+      }
+    }
+
+    return String(safe);
+  };
+
+  const renderTokenValue = (value?: number | null) => (
+    <span className="token-value" title={`${formatTokenCount(value)} Tokens`}>
+      <strong>{formatCompactTokenCount(value)}</strong>
+      <small className="token-value-detail">{formatTokenCount(value)} Tokens</small>
+    </span>
+  );
+
+  const formatDuration = (value?: number | null) => {
+    const safe = value ?? 0;
+    if (safe >= 1000) {
+      return `${(safe / 1000).toFixed(safe >= 10000 ? 0 : 1)} 秒`;
+    }
+    return `${safe} 毫秒`;
+  };
+
+  const formatCompactDuration = (value?: number | null) => {
+    const safe = Math.max(0, value ?? 0);
+    if (safe < 1000) return `${safe}ms`;
+    if (safe < 60_000) {
+      const seconds = safe / 1000;
+      return `${seconds.toFixed(seconds < 100 ? 1 : 0).replace(/\.0$/, "")}s`;
+    }
+    if (safe < 3_600_000) {
+      const minutes = safe / 60_000;
+      return `${minutes.toFixed(minutes < 100 ? 1 : 0).replace(/\.0$/, "")}min`;
+    }
+    const hours = safe / 3_600_000;
+    return `${hours.toFixed(hours < 100 ? 1 : 0).replace(/\.0$/, "")}h`;
+  };
+
+  const renderDurationValue = (value?: number | null) => (
+    <span className="token-value" title={formatDuration(value)}>
+      <strong>{formatCompactDuration(value)}</strong>
+      <small className="token-value-detail">{formatDuration(value)}</small>
+    </span>
+  );
+
+  const formatRate = (value?: number | null) => {
+    if (value === null || value === undefined) return "暂无";
+    return `${(value * 100).toFixed(1)}%`;
+  };
+
+  const getCacheReadRate = (inputTokens?: number | null, cacheReadTokens?: number | null) => {
+    const input = inputTokens ?? 0;
+    const cache = cacheReadTokens ?? 0;
+    if (input <= 0) return null;
+    return cache / input;
+  };
+
+  const renderUsageSummary = (
+    title: string,
+    usage: AnalysisLLMUsageSummary | null | undefined,
+    emptyText: string
+  ) => (
+    <div className="task-summary-card usage-card usage-card-subtle">
+      <div className="section-heading compact">
+        <div>
+          <h4>{title}</h4>
+        </div>
+      </div>
+      {usage ? (
+        <div className="usage-metric-grid">
+          <div className="overview-metric">
+            <span className="meta">模型调用</span>
+            <strong>{formatTokenCount(usage.total_calls)}</strong>
+          </div>
+          <div className="overview-metric">
+            <span className="meta">总 Token</span>
+            {renderTokenValue(usage.total_tokens)}
+          </div>
+          <div className="overview-metric">
+            <span className="meta">输入 / 输出</span>
+            <div className="token-pair">
+              {renderTokenValue(usage.input_tokens)}
+              <span className="token-pair-sep">/</span>
+              {renderTokenValue(usage.output_tokens)}
+            </div>
+          </div>
+          <div className="overview-metric">
+            <span className="meta">累计耗时</span>
+            {renderDurationValue(usage.total_duration_ms)}
+          </div>
+          <div className="overview-metric">
+            <span className="meta">缓存命中估算</span>
+            <strong>{formatRate(usage.estimated_cache_hit_rate)}</strong>
+          </div>
+          <div className="overview-metric">
+            <span className="meta">推理 Token</span>
+            {renderTokenValue(usage.reasoning_tokens)}
+          </div>
+        </div>
+      ) : (
+        <p className="meta">{emptyText}</p>
+      )}
+    </div>
+  );
+
+  const renderUsagePeriod = (
+    title: string,
+    usage: StudentUsageStats["all_time"] | null,
+    emptyText: string
+  ) => (
+    <div className="issue-item">
+      <div className="issue-row">
+        <strong>{title}</strong>
+        <span className="issue-severity issue-severity-token">
+          {renderTokenValue(usage?.total_tokens ?? 0)}
+        </span>
+      </div>
+      {usage ? (
+        <div className="usage-period-grid">
+          <p className="meta">分析任务：{formatTokenCount(usage.task_count)} 次</p>
+          <p className="meta">已记录用量：{formatTokenCount(usage.task_with_usage_count)} 次</p>
+          <p className="meta">模型调用：{formatTokenCount(usage.total_calls)} 次</p>
+          <div className="meta usage-inline-metric">
+            <span>输入 / 输出：</span>
+            <span className="token-pair">
+              {renderTokenValue(usage.input_tokens)}
+              <span className="token-pair-sep">/</span>
+              {renderTokenValue(usage.output_tokens)}
+            </span>
+          </div>
+          <p className="meta">
+            缓存读取：{formatRate(getCacheReadRate(usage.input_tokens, usage.cache_read_tokens))}
+          </p>
+          <div className="meta usage-inline-metric">
+            <span>累计耗时：</span>
+            {renderDurationValue(usage.total_duration_ms)}
+          </div>
+        </div>
+      ) : (
+        <p className="meta">{emptyText}</p>
+      )}
+    </div>
+  );
 
   const renderNotification = (item: Notification) => (
     <div
@@ -519,6 +709,12 @@ export function Student({ user, authChecked }: StudentProps) {
               <p className="eyebrow">当前处理论文</p>
               <h3>{getTaskLabel(selectedThesis)}</h3>
               <p className="meta">{getCurrentPaperHint()}</p>
+            </div>
+            <div className="hero-usage-panel">
+              <div className="hero-usage-item hero-usage-item-single">
+                <span className="meta">本次任务 Token</span>
+                {renderTokenValue(currentUsage?.total_tokens ?? 0)}
+              </div>
             </div>
           </div>
         </div>
@@ -765,6 +961,14 @@ export function Student({ user, authChecked }: StudentProps) {
                           )
                         ) : null}
                       </div>
+
+                      {renderUsageSummary(
+                        "本次 AI 消耗",
+                        currentUsage,
+                        task?.status === "pending" || task?.status === "running"
+                          ? "当前任务仍在分析中，完成后会展示本次调用消耗。"
+                          : "当前任务暂未记录 AI 调用消耗。"
+                      )}
                     </div>
                   ) : task?.status === "failed" ? (
                     <div className="task-summary-card">
@@ -792,6 +996,47 @@ export function Student({ user, authChecked }: StudentProps) {
           </div>
 
           <div className="student-side-column">
+            <div className="card">
+              <div className="section-heading compact">
+                <div>
+                  <p className="eyebrow">通知中心</p>
+                </div>
+              </div>
+
+              <div className="form">
+                {notificationsLoading && notifications.length === 0 ? (
+                  <p className="meta">正在加载通知...</p>
+                ) : notifications.length === 0 ? (
+                  <p className="meta">暂无通知。</p>
+                ) : (
+                  <>
+                    {unreadNotifications.length > 0 ? (
+                      unreadNotifications.map(renderNotification)
+                    ) : (
+                      <p className="meta">暂无未读通知。</p>
+                    )}
+                    {readNotifications.length > 0 ? (
+                      <div className="read-notification-group">
+                        <button
+                          type="button"
+                          className="read-notification-toggle"
+                          onClick={() => setReadNotificationsExpanded((value) => !value)}
+                        >
+                          <span>{readNotificationsExpanded ? "收起已读通知" : "已读通知"}</span>
+                          <span>{readNotifications.length} 条</span>
+                        </button>
+                        {readNotificationsExpanded ? (
+                          <div className="read-notification-list">
+                            {readNotifications.map(renderNotification)}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            </div>
+
             <div className="card">
               <div className="section-heading compact">
                 <div>
@@ -850,42 +1095,17 @@ export function Student({ user, authChecked }: StudentProps) {
             <div className="card">
               <div className="section-heading compact">
                 <div>
-                  <p className="eyebrow">通知中心</p>
+                  <p className="eyebrow">AI 使用统计</p>
                 </div>
               </div>
-
-              <div className="form">
-                {notificationsLoading && notifications.length === 0 ? (
-                  <p className="meta">正在加载通知...</p>
-                ) : notifications.length === 0 ? (
-                  <p className="meta">暂无通知。</p>
-                ) : (
-                  <>
-                    {unreadNotifications.length > 0 ? (
-                      unreadNotifications.map(renderNotification)
-                    ) : (
-                      <p className="meta">暂无未读通知。</p>
-                    )}
-                    {readNotifications.length > 0 ? (
-                      <div className="read-notification-group">
-                        <button
-                          type="button"
-                          className="read-notification-toggle"
-                          onClick={() => setReadNotificationsExpanded((value) => !value)}
-                        >
-                          <span>{readNotificationsExpanded ? "收起已读通知" : "已读通知"}</span>
-                          <span>{readNotifications.length} 条</span>
-                        </button>
-                        {readNotificationsExpanded ? (
-                          <div className="read-notification-list">
-                            {readNotifications.map(renderNotification)}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </div>
+              {usageLoading && !usageStats ? (
+                <p className="meta">正在加载统计...</p>
+              ) : (
+                <div className="issue-list">
+                  {renderUsagePeriod("本月累计", currentMonthUsage, "本月还没有产生 AI 调用记录。")}
+                  {renderUsagePeriod("总累计", allTimeUsage, "当前还没有产生 AI 调用记录。")}
+                </div>
+              )}
             </div>
 
             <div className="card">
