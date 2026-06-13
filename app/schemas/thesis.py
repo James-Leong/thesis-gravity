@@ -27,9 +27,33 @@ class AnalysisTaskRead(BaseModel):
     llm_usage_summary: AnalysisLLMUsageSummary | None = None
     error_message: str | None = None
     student_ready_for_mentor: bool = False
+    ignored_issue_keys: list[str] | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class ThesisVersionTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    version_no: int
+    stage: str
+    file_path: str
+    submitted_at: datetime
+    latest_task: AnalysisTaskRead | None = None
+
+
+class ThesisWorkspaceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    current_version: ThesisVersionTaskRead | None = None
+    versions: list[ThesisVersionTaskRead]
 
 
 class DraftSubmissionResponse(BaseModel):

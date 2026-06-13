@@ -4,6 +4,7 @@ import { apiFetch, UserRead } from "../api/client";
 
 export function Register() {
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("student");
   const [notice, setNotice] = useState<string | null>(null);
@@ -18,7 +19,7 @@ export function Register() {
     try {
       const result = await apiFetch<UserRead>("/auth/register", {
         method: "POST",
-        body: JSON.stringify({ email, password, role }),
+        body: JSON.stringify({ email, name: name.trim() || null, password, role }),
       });
       setNotice(`账号创建成功：${result.email}。`);
     } catch (err) {
@@ -33,12 +34,12 @@ export function Register() {
   };
 
   return (
-    <section className="section">
+    <section className="section auth-section">
       <h2 className="section-title">注册</h2>
       <div className="card">
         <form className="form" onSubmit={handleSubmit}>
           <p className="meta">
-            请先选择你的身份。导师登录后可以创建学生账号，学生登录后进入学生工作台。
+            请先选择你的身份，选择后不可修改。
           </p>
           <div>
             <label htmlFor="reg-email">邮箱</label>
@@ -49,6 +50,16 @@ export function Register() {
               onChange={(event) => setEmail(event.target.value)}
               placeholder="请输入邮箱"
               required
+            />
+          </div>
+          <div>
+            <label htmlFor="reg-name">姓名</label>
+            <input
+              id="reg-name"
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="请输入姓名（可选）"
             />
           </div>
           <div>
@@ -72,8 +83,6 @@ export function Register() {
             >
               <option value="student">学生</option>
               <option value="mentor">导师</option>
-              <option value="academic">教务</option>
-              <option value="admin">管理员</option>
             </select>
           </div>
           <button className="primary" type="submit" disabled={loading}>

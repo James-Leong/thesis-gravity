@@ -16,6 +16,7 @@
 - 基于 `HttpOnly` 会话 Cookie 的注册/登录接口。
 - 基于角色的基础访问控制。
 - PDF 草稿上传与本地存储。
+- 以“论文任务 -> 多个提交版本”组织学生工作流，而不是把每次上传视为独立任务。
 - 分析任务创建、后台执行、状态查询。
 - 基于 Agno 的论文草稿分析代理。
 - 基于 `source/common-problems-for-students.md` 的分层逐项校验：规则层优先、文本模型补充、图表视觉模型可选。
@@ -26,7 +27,6 @@
 
 ### 尚未完成
 
-- 导师评审接口与评审记录查询。
 - 教务与管理员的细粒度查询视图。
 - 队列化异步任务执行。
 - 参考文档 PDF 到 Markdown 的正式转换流程。
@@ -195,11 +195,19 @@ npm run dev
 | `POST` | `/auth/login` | 登录并设置 `HttpOnly` 会话 Cookie |
 | `POST` | `/auth/logout` | 清除当前会话 Cookie |
 | `GET` | `/auth/me` | 获取当前登录用户 |
-| `POST` | `/theses/drafts` | 学生上传论文草稿 PDF |
+| `GET` | `/theses` | 学生获取自己的论文任务与版本列表 |
+| `POST` | `/theses/drafts` | 学生上传论文草稿 PDF；首次创建论文任务，后续可带 `thesis_id` 追加新版本 |
+| `GET` | `/theses/versions/{version_id}/file` | 按权限预览某个版本的 PDF |
 | `GET` | `/tasks` | 获取当前用户可见的分析任务列表 |
 | `GET` | `/tasks/{task_id}` | 查询分析任务状态与结果 |
+| `POST` | `/tasks/{task_id}/submit-for-mentor` | 学生将当前最新版本提交导师审核 |
 | `GET` | `/notifications` | 获取当前用户通知 |
 | `POST` | `/notifications/{id}/read` | 标记通知已读 |
+| `GET` | `/mentor/pending-reviews` | 导师获取待评审版本列表 |
+| `GET` | `/mentor/theses` | 导师按学生/论文查看当前论文进度，可搜索 |
+| `GET` | `/mentor/versions/{version_id}` | 导师查看版本详情与分析结果 |
+| `GET` | `/mentor/reviews/{version_id}` | 查询某版本的导师评审记录 |
+| `POST` | `/mentor/reviews` | 导师提交评审（approved / changes_requested） |
 | `GET` | `/health` | 健康检查 |
 
 ## 开发约定
@@ -210,6 +218,8 @@ npm run dev
 - 上传文件仅支持 PDF。
 - 上传的 PDF 必须可解析且能提取到文本内容；空白文件、纯图片扫描件会被拒绝，且不会保留无效上传文件。
 - 论文分析参考文档当前只读取 Markdown 或纯文本，不直接读取 PDF。
+- 学生侧流程按论文任务推进：`analysis_pending`（AI 处理中）、`analysis_done`（待提交导师）、`mentor_review`（审核中）、`changes_requested`（待修改）、`approved`（已完成）。
+- 导师待评审列表只展示每篇论文当前最新、且已提交导师审核的版本。
 - 提交前运行：
 
 ```bash

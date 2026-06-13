@@ -15,6 +15,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default=ROLE_STUDENT, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -145,3 +146,16 @@ class MentorReview(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     version: Mapped[ThesisVersion] = relationship(back_populates="mentor_reviews")
+
+
+class MentorRelation(Base):
+    __tablename__ = "mentor_relations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    mentor_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )

@@ -106,8 +106,10 @@ uv run ruff format .
 ## 运行数据
 
 - SQLite 数据库默认位于 `data/app.db`
+- **测试数据库**：`tests/conftest.py` 已设置 `DATABASE_URL` 指向 `data/test.db`，所有自动化测试自动使用独立测试库，不会触碰 `data/app.db`
 - 论文上传目录默认位于 `data/theses/{student_id}/`
 - 本地运行数据统一放在 `data/` 下
+- **严禁对 `data/app.db` 执行破坏性操作**（DELETE、DROP、TRUNCATE 等），详见 `AGENTS.md` Database Safety Rules
 - 上传的 PDF 会先做内容校验；无法解析、空白或纯图片扫描件会被拒绝，且不会保留无效文件
 - 论文分析会按 `source/common-problems-for-students.md` 自动拆分为规则层、文本模型层和图表视觉层，并返回逐项校验结果
 - 文本模型层不会再按零散小条目任意切批，而是优先按大的检查方向聚合请求，再在同一次模型返回中展开各个细分检查点，以减少模型调用次数
@@ -117,6 +119,12 @@ uv run ruff format .
 - 分析时会先建立“PDF 物理页 -> 论文印刷页码”的映射；返回结果优先展示论文页码，同时保留 PDF 页码用于定位原文件
 - 未配置 `VISION_LLM_MODEL_ID` 时，图表清晰度、坐标轴、排版等图表视觉类条目会标记为“待人工复核”
 - 每次分析任务会额外记录 LLM 调用摘要到 `analysis_tasks.llm_usage_summary_json`，并把每次模型调用的详细输入输出/耗时/token/cache 指标记录到 `analysis_llm_call_logs`，便于后续计费与调用分析
+- 学生工作台现在按“论文任务”组织：`POST /theses/drafts` 首次提交会创建新论文任务；后续提交同一篇论文时携带 `thesis_id`，会在原论文下新增版本，而不是新建一条独立任务
+- 论文状态建议按 `analysis_pending`（AI 处理中）→ `analysis_done`（待提交导师）→ `mentor_review`（导师审核中）→ `approved`（已完成）流转；若导师退回，则切到 `changes_requested`（待修改），学生上传新版本后重新回到 `analysis_pending`
+- 学生处理完分析问题后可通过 `/tasks/{task_id}/submit-for-mentor` 将当前最新版本提交导师评审；论文进入 `mentor_review` 后，学生不能再次提交新版本，必须等待导师给出通过或退回结果
+- 导师通过 `/mentor/pending-reviews` 查看待评审的“当前最新版本”，通过 `/mentor/reviews` 提交 `approved` 或 `changes_requested` 决定；评审结果会以站内通知形式告知学生，同时更新论文状态与版本 stage
+- 导师可通过 `/mentor/theses` 查看已绑定学生的论文最新进度；待评审完成后，论文会从“待评审列表”移出，但仍可在该进度列表中继续搜索和展开查看
+- 导师或学生可通过 `/theses/versions/{version_id}/file` 受控预览对应版本的 PDF 原文件
 
 ## 认证约定
 

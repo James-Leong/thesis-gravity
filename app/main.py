@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.db import init_db
-from app.routers import admin, auth, notifications, tasks, theses
+from app.routers import admin, auth, mentor, notifications, tasks, theses
 
 
 @asynccontextmanager
@@ -67,6 +67,7 @@ app.include_router(theses.router)
 app.include_router(tasks.router)
 app.include_router(notifications.router)
 app.include_router(admin.router)
+app.include_router(mentor.router)
 
 frontend_dist = Path(settings.base_dir) / "frontend" / "dist"
 if frontend_dist.exists():

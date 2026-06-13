@@ -1,9 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
-from app.core.constants import ROLE_ACADEMIC, ROLE_ADMIN, ROLE_MENTOR, ROLE_STUDENT
+from app.core.constants import (
+    ROLE_ACADEMIC,
+    ROLE_ADMIN,
+    ROLE_MENTOR,
+    ROLE_STUDENT,
+    THESIS_STATUS_MENTOR_REVIEW,
+)
 from app.db import get_db
 from app.deps import require_roles
 from app.models import AnalysisTask, ThesisVersion
@@ -46,6 +52,7 @@ def _build_task_read(task: AnalysisTask) -> AnalysisTaskRead:
         llm_usage_summary=llm_usage_summary,
         error_message=error_message,
         student_ready_for_mentor=task.student_ready_for_mentor,
+        ignored_issue_keys=task.ignored_issue_keys_json,
         created_at=task.created_at,
         started_at=task.started_at,
         finished_at=task.finished_at,
@@ -105,6 +112,9 @@ def submit_for_mentor(
     if task.status != "completed":
         raise HTTPException(status_code=400, detail="分析尚未完成，无法提交导师评审。")
 
+    if thesis.status == THESIS_STATUS_MENTOR_REVIEW and task.student_ready_for_mentor:
+        raise HTTPException(status_code=400, detail="当前论文已在导师审核中，请等待导师处理。")
+
     result, _ = _parse_result(task)
     if result and not _is_dev():
         ignored_keys = set(task.ignored_issue_keys_json or [])
@@ -113,7 +123,7 @@ def submit_for_mentor(
             if key in ignored_keys:
                 continue
             severity = issue.severity.lower()
-            is_high_medium = not (severity in ("低", "low", "minor", "info"))
+            is_high_medium = severity not in ("低", "low", "minor", "info")
             if is_high_medium:
                 raise HTTPException(
                     status_code=400,
@@ -121,6 +131,8 @@ def submit_for_mentor(
                 )
 
     task.student_ready_for_mentor = True
+    if thesis:
+        thesis.status = THESIS_STATUS_MENTOR_REVIEW
     db.commit()
     db.refresh(task)
     return _build_task_read(task)
@@ -157,7 +169,7 @@ def ignore_issue(
 
     # in production, reject medium/high severity ignores
     severity = issue.severity.lower()
-    is_high_medium = not (severity in ("低", "low", "minor", "info"))
+    is_high_medium = severity not in ("低", "low", "minor", "info")
     if is_high_medium and not _is_dev():
         raise HTTPException(
             status_code=400,

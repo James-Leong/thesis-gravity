@@ -72,10 +72,124 @@ export type AnalysisTask = {
   ignored_issue_keys?: string[] | null;
 };
 
+export type MentorReview = {
+  id: number;
+  version_id: number;
+  mentor_id: number;
+  decision: "approved" | "changes_requested";
+  comments: string | null;
+  created_at: string;
+};
+
+export type MentorUser = {
+  id: number;
+  email: string;
+  name: string | null;
+};
+
+export type MentorThesis = {
+  id: number;
+  title: string;
+  status: string;
+  student: MentorUser;
+};
+
+export type MentorVersion = {
+  id: number;
+  version_no: number;
+  stage: string;
+  file_path: string;
+  submitted_at: string;
+};
+
+export type MentorPendingReview = {
+  version: MentorVersion;
+  thesis: MentorThesis;
+  latest_task: AnalysisTask;
+};
+
+export type MentorTrackedThesis = {
+  thesis: MentorThesis;
+  current_version: MentorVersion;
+  latest_task: AnalysisTask | null;
+  latest_review: MentorReview | null;
+};
+
+export type MentorVersionDetail = {
+  version: MentorVersion;
+  thesis: MentorThesis;
+  latest_task: AnalysisTask | null;
+  reviews: MentorReview[];
+};
+
+export type MentorReviewSubmission = {
+  review: MentorReview;
+  thesis: MentorThesis;
+  version: MentorVersion;
+};
+
+export type MentorRelation = {
+  id: number;
+  mentor_id: number;
+  student_id: number;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+};
+
+export type MentorListItem = {
+  id: number;
+  email: string;
+  name: string | null;
+};
+
+export type MentorStudentItem = {
+  id: number;
+  email: string;
+  name: string | null;
+  thesis_count: number;
+  bound_at: string;
+};
+
+export type MentorStudentList = {
+  total: number;
+  items: MentorStudentItem[];
+};
+
+export type StudentApplication = {
+  has_application: boolean;
+  application: MentorRelation | null;
+  mentor: MentorListItem | null;
+};
+
+export type MentorApplication = {
+  application: MentorRelation;
+  student: MentorListItem;
+};
+
 export type DraftResponse = {
   thesis_id: number;
   version_id: number;
   task: AnalysisTask;
+};
+
+export type ThesisVersionTask = {
+  id: number;
+  version_no: number;
+  stage: string;
+  file_path: string;
+  submitted_at: string;
+  latest_task: AnalysisTask | null;
+};
+
+export type ThesisWorkspace = {
+  id: number;
+  title: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  current_version: ThesisVersionTask | null;
+  versions: ThesisVersionTask[];
 };
 
 export type Notification = {
@@ -91,6 +205,7 @@ export type UserRole = keyof typeof ROLE_LABELS;
 export type UserRead = {
   id: number;
   email: string;
+  name: string | null;
   role: UserRole;
   is_active: boolean;
   created_at: string;

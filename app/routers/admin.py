@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.constants import ROLE_ADMIN
 from app.db import get_db
 from app.deps import require_roles
-from app.models import AnalysisTask, Notification, Thesis, ThesisVersion, User
+from app.models import AnalysisTask, Thesis, ThesisVersion, User
 from app.schemas.thesis import AnalysisTaskRead
 
 router = APIRouter(prefix="/admin", tags=["admin"])

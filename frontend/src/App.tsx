@@ -4,6 +4,7 @@ import { UserRead, apiFetch, formatRoleLabel } from "./api/client";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { NotFound } from "./pages/NotFound";
+import { Profile } from "./pages/Profile";
 import { Register } from "./pages/Register";
 import { Workspace } from "./pages/Workspace";
 
@@ -79,6 +80,7 @@ export function App() {
               首页
             </NavLink>
             {user ? <NavLink to="/workspace">工作台</NavLink> : null}
+            {user ? <NavLink to="/profile">个人信息</NavLink> : null}
             {!user ? <NavLink to="/login">登录</NavLink> : null}
             {!user ? <NavLink to="/register">注册</NavLink> : null}
           </nav>
@@ -102,6 +104,10 @@ export function App() {
               path="/workspace"
               element={<Workspace user={user} authChecked={authChecked} />}
             />
+            <Route
+              path="/profile"
+              element={<Profile user={user} onUserUpdate={handleAuth} />}
+            />
             <Route path="/student" element={<Navigate to="/workspace" replace />} />
             <Route path="/mentor" element={<Navigate to="/workspace" replace />} />
             <Route path="*" element={<NotFound />} />
@@ -110,7 +116,6 @@ export function App() {
 
         <footer className="footer">
           <span>论文辅导系统 · 后端基于 FastAPI</span>
-          <span>接口地址：localhost:8000</span>
         </footer>
       </div>
     </BrowserRouter>

@@ -7,7 +7,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.schemas.auth import UserCreate, UserLogin, UserRead
+from app.schemas.auth import UserCreate, UserLogin, UserProfileUpdate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -28,6 +28,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
 def register_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     if payload.role not in ROLE_VALUES:
         raise HTTPException(status_code=400, detail="Invalid role.")
+    if payload.role in ("admin", "academic"):
+        raise HTTPException(status_code=403, detail="Cannot register with this role.")
 
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
@@ -35,6 +37,7 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
 
     user = User(
         email=payload.email,
+        name=payload.name,
         password_hash=hash_password(payload.password),
         role=payload.role,
     )
@@ -75,4 +78,17 @@ def logout_user(response: Response) -> None:
 
 @router.get("/me", response_model=UserRead)
 def get_me(current_user: User = Depends(get_current_user)) -> User:
+    return current_user
+
+
+@router.put("/profile", response_model=UserRead)
+def update_profile(
+    payload: UserProfileUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    if payload.name is not None:
+        current_user.name = payload.name.strip() or None
+    db.commit()
+    db.refresh(current_user)
     return current_user

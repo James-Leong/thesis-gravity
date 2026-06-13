@@ -39,7 +39,7 @@ export function Login({ onAuth }: LoginProps) {
   };
 
   return (
-    <section className="section">
+    <section className="section auth-section">
       <h2 className="section-title">登录</h2>
       <div className="card">
         <form className="form" onSubmit={handleSubmit}>

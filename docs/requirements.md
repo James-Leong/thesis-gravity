@@ -42,7 +42,7 @@
 - [ ] 文件扩展名仅允许 .pdf。
 - [ ] 存储路径为 data/theses/{student_id}/。
 - [ ] 文件名使用 UUID，避免重名。
-- [ ] 创建 Thesis、ThesisVersion 与 AnalysisTask 记录。
+- [ ] 首次提交创建 Thesis、ThesisVersion 与 AnalysisTask 记录；后续修改应在同一 Thesis 下追加新版本，而不是新建独立论文任务。
 - [ ] 版本初始状态与分析任务状态正确初始化。
 
 ### 5.3 自动分析
@@ -68,35 +68,40 @@
 - [ ] 标记通知为已读。
 
 ### 5.6 导师评审
-- [ ] 导师提交评审（同意/退回修改）。
-- [ ] 评审包含评论与时间戳。
-- [ ] 更新论文状态与版本状态。
-- [ ] 评审后生成通知给学生。
-- [ ] 可查询某版本的评审记录。
+- [x] 导师提交评审（同意/退回修改）。
+- [x] 评审包含评论与时间戳。
+- [x] 更新论文状态与版本状态。
+- [x] 评审后生成通知给学生。
+- [x] 可查询某版本的评审记录。
+- [x] 学生在导师审核中不能再次提交当前论文的新版本。
+- [x] 导师待评审列表只展示论文当前最新版本，并可预览原始 PDF。
 
 ### 5.7 接口清单（摘要）
-- [ ] /auth/register
-- [ ] /auth/login
-- [ ] /auth/logout
-- [ ] /auth/me
-- [ ] /theses/drafts
-- [ ] /tasks
-- [ ] /tasks/{task_id}
-- [ ] /notifications
-- [ ] /notifications/{id}/read
-- [ ] /mentor/reviews
-- [ ] /mentor/reviews/{version_id}
+- [x] /auth/register
+- [x] /auth/login
+- [x] /auth/logout
+- [x] /auth/me
+- [x] /theses/drafts
+- [x] /tasks
+- [x] /tasks/{task_id}
+- [x] /notifications
+- [x] /notifications/{id}/read
+- [x] /mentor/reviews
+- [x] /mentor/reviews/{version_id}
 
 ## 6. 流程图
 ### 6.1 草稿提交与分析
 ```mermaid
 flowchart TD
-	A[学生上传PDF] --> B[创建Thesis与Version]
-	B --> C[创建AnalysisTask: pending]
-	C --> D[后台执行分析任务]
-	D --> E{分析成功?}
-	E -->|是| F[保存结果并通知学生]
-	E -->|否| G[记录错误并更新状态]
+	A[学生上传PDF] --> B{首次提交?}
+	B -->|是| C[创建Thesis与Version]
+	B -->|否| D[在原 Thesis 下追加新 Version]
+	C --> E[创建AnalysisTask: pending]
+	D --> E
+	E --> F[后台执行分析任务]
+	F --> G{分析成功?}
+	G -->|是| H[论文进入 analysis_done 并通知学生]
+	G -->|否| I[记录错误并更新状态]
 ```
 
 ### 6.2 任务轮询与通知
@@ -112,12 +117,14 @@ flowchart TD
 ### 6.3 导师评审
 ```mermaid
 flowchart TD
-	A[导师获取版本] --> B[提交评审决定]
-	B --> C{决定类型}
-	C -->|同意| D[更新论文状态为通过]
-	C -->|退回| E[更新论文状态为需修改]
-	D --> F[通知学生]
-	E --> F
+	A[学生提交当前最新版本给导师] --> B[论文进入 mentor_review]
+	B --> C[导师预览 PDF 与分析结果]
+	C --> D[提交评审决定]
+	D --> E{决定类型}
+	E -->|同意| F[更新论文状态为 approved]
+	E -->|退回| G[更新论文状态为 changes_requested]
+	F --> H[通知学生]
+	G --> H
 ```
 
 ## 7. 数据与存储

@@ -3,6 +3,8 @@ import {
   AnalysisTask,
   DraftResponse,
   Notification,
+  ThesisVersionTask,
+  ThesisWorkspace,
   UserRead,
   apiFetch,
   apiForm,
@@ -16,8 +18,9 @@ type StudentProps = {
 export function Student({ user, authChecked }: StudentProps) {
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [task, setTask] = useState<AnalysisTask | null>(null);
-  const [historyTasks, setHistoryTasks] = useState<AnalysisTask[]>([]);
+  const [theses, setTheses] = useState<ThesisWorkspace[]>([]);
+  const [selectedThesisId, setSelectedThesisId] = useState<number | null>(null);
+  const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,12 +31,6 @@ export function Student({ user, authChecked }: StudentProps) {
   const [readNotificationsExpanded, setReadNotificationsExpanded] = useState(false);
   const isDevMode = import.meta.env.DEV;
 
-  // sync persisted ignored issues from backend
-  useEffect(() => {
-    const keys = task?.ignored_issue_keys ?? [];
-    setIgnoredIssues(new Set(keys));
-  }, [task?.id, task?.ignored_issue_keys?.length]);
-
   const requireToken = () => {
     if (!user) {
       setError("请先登录后再使用学生工作台。");
@@ -42,63 +39,27 @@ export function Student({ user, authChecked }: StudentProps) {
     return true;
   };
 
-  const handleDraftSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setNotice(null);
-    setError(null);
-    if (!requireToken()) return;
-    if (!file) {
-      setError("请选择一个 PDF 文件。");
-      return;
-    }
+  const getSelectedThesis = (items = theses) =>
+    items.find((item) => item.id === selectedThesisId) ?? items[0] ?? null;
 
-    const form = new FormData();
-    form.append("title", title);
-    form.append("file", file);
-
-    setLoading(true);
-    try {
-      const result = await apiForm<DraftResponse>("/theses/drafts", form);
-      setTask(result.task);
-      await loadTasks(false, result.task.id);
-      setNotice("草稿已提交，分析任务已创建。");
-    } catch (err) {
-      const message =
-        typeof err === "object" && err !== null && "detail" in err
-          ? String((err as { detail: string }).detail)
-          : "提交失败。";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
+  const getSelectedVersion = (thesis: ThesisWorkspace | null) => {
+    if (!thesis) return null;
+    return (
+      thesis.versions.find((version) => version.id === selectedVersionId) ??
+      thesis.current_version ??
+      thesis.versions[0] ??
+      null
+    );
   };
 
-  const handleTaskRefresh = async () => {
-    setNotice(null);
-    setError(null);
-    if (!requireToken()) return;
-    if (!task) {
-      setError("当前还没有可刷新的稿件记录。");
-      return;
-    }
-    setLoading(true);
-    try {
-      const result = await apiFetch<AnalysisTask>(`/tasks/${task.id}`);
-      setTask(result);
-      setHistoryTasks((prev) =>
-        prev.map((t) => (t.id === result.id ? result : t))
-      );
-      setNotice("任务状态已刷新。");
-    } catch (err) {
-      const message =
-        typeof err === "object" && err !== null && "detail" in err
-          ? String((err as { detail: string }).detail)
-          : "查询任务失败。";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const selectedThesis = getSelectedThesis();
+  const selectedVersion = getSelectedVersion(selectedThesis);
+  const task = selectedVersion?.latest_task ?? null;
+
+  useEffect(() => {
+    const keys = task?.ignored_issue_keys ?? [];
+    setIgnoredIssues(new Set(keys));
+  }, [task?.id, task?.ignored_issue_keys]);
 
   const loadNotifications = async () => {
     if (!requireToken()) return;
@@ -117,6 +78,70 @@ export function Student({ user, authChecked }: StudentProps) {
     }
   };
 
+  const loadTheses = async (showNotice = true, thesisId?: number, versionId?: number) => {
+    if (!requireToken()) return;
+    setLoading(true);
+    try {
+      const result = await apiFetch<ThesisWorkspace[]>("/theses");
+      setTheses(result);
+
+      const nextSelectedThesis =
+        (thesisId ? result.find((item) => item.id === thesisId) : null) ??
+        result.find((item) => item.id === selectedThesisId) ??
+        result[0] ??
+        null;
+      const nextSelectedVersion =
+        nextSelectedThesis?.versions.find((item) => item.id === versionId) ??
+        nextSelectedThesis?.versions.find((item) => item.id === selectedVersionId) ??
+        nextSelectedThesis?.current_version ??
+        nextSelectedThesis?.versions[0] ??
+        null;
+
+      setSelectedThesisId(nextSelectedThesis?.id ?? null);
+      setSelectedVersionId(nextSelectedVersion?.id ?? null);
+
+      if (nextSelectedThesis) {
+        setTitle(nextSelectedThesis.title);
+      }
+
+      if (showNotice) {
+        setNotice(result.length > 0 ? "论文任务已加载。" : "当前还没有论文任务。");
+      }
+    } catch (err) {
+      const message =
+        typeof err === "object" && err !== null && "detail" in err
+          ? String((err as { detail: string }).detail)
+          : "加载论文任务失败。";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!authChecked || !user || user.role !== "student") return;
+    void loadTheses(false);
+    void loadNotifications();
+  }, [authChecked, user]);
+
+  useEffect(() => {
+    if (!selectedThesis) {
+      setTitle("");
+      return;
+    }
+    setTitle(selectedThesis.title);
+  }, [selectedThesis?.id]);
+
+  useEffect(() => {
+    if (!task || (task.status !== "pending" && task.status !== "running")) return;
+
+    const interval = setInterval(() => {
+      void loadTheses(false, selectedThesis?.id ?? undefined, selectedVersion?.id ?? undefined);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [task?.id, task?.status, selectedThesis?.id, selectedVersion?.id]);
+
   const markRead = async (notificationId: number) => {
     if (!requireToken()) return;
     try {
@@ -133,67 +158,54 @@ export function Student({ user, authChecked }: StudentProps) {
     }
   };
 
-  const loadTasks = async (showNotice = true, selectedTaskId?: number) => {
+  const handleDraftSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setNotice(null);
+    setError(null);
     if (!requireToken()) return;
+    if (!file) {
+      setError("请选择一个 PDF 文件。");
+      return;
+    }
+
+    const form = new FormData();
+    form.append("title", title);
+    form.append("file", file);
+    if (selectedThesis && selectedThesis.status !== "approved") {
+      form.append("thesis_id", String(selectedThesis.id));
+    }
+
     setLoading(true);
     try {
-      const result = await apiFetch<AnalysisTask[]>("/tasks");
-      setHistoryTasks(result);
-      if (result.length > 0) {
-        const selected =
-          (selectedTaskId ? result.find((item) => item.id === selectedTaskId) : null) ?? result[0];
-        setTask((prev) => {
-          if (prev && prev.id === selected.id) {
-            return selected;
-          }
-          return selected;
-        });
-      } else {
-        setTask(null);
-      }
-      if (showNotice) {
-        setNotice(result.length > 0 ? "历史任务已加载。" : "当前还没有历史任务。");
-      }
+      const result = await apiForm<DraftResponse>("/theses/drafts", form);
+      setFile(null);
+      await loadTheses(false, result.thesis_id, result.version_id);
+      setNotice(
+        selectedThesis && selectedThesis.status !== "approved"
+          ? "已提交论文新版本，AI 正在处理中。"
+          : "已创建新的论文任务，AI 正在处理中。"
+      );
     } catch (err) {
       const message =
         typeof err === "object" && err !== null && "detail" in err
           ? String((err as { detail: string }).detail)
-          : "加载历史任务失败。";
+          : "提交失败。";
       setError(message);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (!authChecked || !user || user.role !== "student") return;
-    void loadTasks(false);
-    void loadNotifications();
-  }, [authChecked, user]);
-
-  useEffect(() => {
-    setIgnoredIssues(new Set());
-  }, [task?.id]);
-
-  useEffect(() => {
-    if (!task || (task.status !== "pending" && task.status !== "running")) return;
-
-    const interval = setInterval(() => {
-      void (async () => {
-        try {
-          const refreshed = await apiFetch<AnalysisTask>(`/tasks/${task.id}`);
-          setTask(refreshed);
-          setHistoryTasks((prev) =>
-            prev.map((t) => (t.id === refreshed.id ? refreshed : t))
-          );
-        } catch {
-          // ignore polling errors
-        }
-      })();
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [task?.id, task?.status]);
+  const handleTaskRefresh = async () => {
+    setNotice(null);
+    setError(null);
+    if (!requireToken()) return;
+    if (!selectedThesis) {
+      setError("当前还没有可刷新的论文任务。");
+      return;
+    }
+    await loadTheses(true, selectedThesis.id, selectedVersion?.id);
+  };
 
   const formatTaskStatus = (status: string) => {
     switch (status) {
@@ -207,6 +219,36 @@ export function Student({ user, authChecked }: StudentProps) {
         return "失败";
       default:
         return status;
+    }
+  };
+
+  const formatThesisStatus = (status: string) => {
+    switch (status) {
+      case "analysis_pending":
+        return "AI 处理中";
+      case "analysis_done":
+        return "待提交导师";
+      case "changes_requested":
+        return "待修改";
+      case "mentor_review":
+        return "审核中";
+      case "approved":
+        return "已完成";
+      default:
+        return status;
+    }
+  };
+
+  const formatStage = (stage: string) => {
+    switch (stage) {
+      case "draft":
+        return "初稿";
+      case "revision":
+        return "修改稿";
+      case "final":
+        return "定稿";
+      default:
+        return stage;
     }
   };
 
@@ -231,31 +273,32 @@ export function Student({ user, authChecked }: StudentProps) {
     !!t?.result?.ready_for_mentor || !!t?.student_ready_for_mentor;
 
   const getCurrentPaperHint = () => {
-    if (!task) {
-      return "提交论文后会显示在这里。";
+    if (!selectedThesis) {
+      return "提交论文后会在这里形成一个持续推进的论文任务。";
     }
-    if (task.status === "completed" && isReadyForMentor(task)) {
-      return "可以提交导师评审。";
+    switch (selectedThesis.status) {
+      case "analysis_pending":
+        return "AI 正在处理当前版本，处理完成后再决定是否提交导师。";
+      case "analysis_done":
+        return isReadyForMentor(task)
+          ? "分析已完成，可以整理后提交导师审核。"
+          : "分析已完成，建议先根据问题清单继续修改。";
+      case "changes_requested":
+        return "导师已退回修改，继续上传新版本后会重新进入 AI 分析。";
+      case "mentor_review":
+        return "当前版本正在导师审核中，审核期间不能再次提交。";
+      case "approved":
+        return "论文任务已通过导师审核。";
+      default:
+        return "继续围绕这篇论文迭代版本。";
     }
-    if (task.status === "completed") {
-      return priorityIssues.length > 0
-        ? `建议先处理 ${priorityIssues.length} 条重点问题。`
-        : "建议检查问题清单后提交新版本。";
-    }
-    if (task.status === "failed") {
-      return "分析失败，可以重新提交或稍后查看。";
-    }
-    if (task.status === "running") {
-      return "正在分析，完成后会自动更新。";
-    }
-    return "等待开始分析。";
   };
 
-  const getTaskLabel = (item: AnalysisTask | null) => {
+  const getTaskLabel = (item: ThesisWorkspace | null) => {
     if (!item) {
-      return "未选择稿件";
+      return "暂无处理中的论文";
     }
-    return item.thesis_title?.trim() || "未命名稿件";
+    return item.title?.trim() || "未命名论文";
   };
 
   const isLowSeverity = (severity: string) => {
@@ -352,7 +395,7 @@ export function Student({ user, authChecked }: StudentProps) {
   };
 
   const toggleIgnoreIssue = async (key: string) => {
-    // if already ignored, un-ignore locally (no backend call needed)
+    if (!task) return;
     if (ignoredIssues.has(key)) {
       setIgnoredIssues((prev) => {
         const next = new Set(prev);
@@ -361,10 +404,11 @@ export function Student({ user, authChecked }: StudentProps) {
       });
       return;
     }
-    // in dev mode, call backend to persist; in prod, only low-severity goes through local set
-    if (isDevMode && task) {
+    if (isDevMode) {
       try {
-        await apiFetch(`/tasks/${task.id}/issues/${encodeURIComponent(key)}/ignore`, { method: "POST" });
+        await apiFetch(`/tasks/${task.id}/issues/${encodeURIComponent(key)}/ignore`, {
+          method: "POST",
+        });
       } catch (err) {
         const message =
           typeof err === "object" && err !== null && "detail" in err
@@ -378,14 +422,14 @@ export function Student({ user, authChecked }: StudentProps) {
   };
 
   const handleSubmitForMentor = async () => {
-    if (!task) return;
+    if (!task || !selectedThesis) return;
     setNotice(null);
     setError(null);
     setLoading(true);
     try {
       await apiFetch(`/tasks/${task.id}/submit-for-mentor`, { method: "POST" });
-      await handleTaskRefresh();
-      setNotice("稿件已提交进入导师评审流程。");
+      await loadTheses(false, selectedThesis.id, selectedVersion?.id);
+      setNotice("当前版本已提交导师审核。");
     } catch (err) {
       const message =
         typeof err === "object" && err !== null && "detail" in err
@@ -397,9 +441,6 @@ export function Student({ user, authChecked }: StudentProps) {
     }
   };
 
-  const latestTask = historyTasks[0] ?? null;
-  const hasActiveTask =
-    !!latestTask && (latestTask.status === "pending" || latestTask.status === "running");
   const result = task?.result ?? null;
   const layerSummaries = result?.layer_summaries ?? [];
   const summaryChecks = layerSummaries.reduce((total, layer) => total + layer.total, 0);
@@ -423,6 +464,12 @@ export function Student({ user, authChecked }: StudentProps) {
   const allPriorityIssuesCleared = priorityIssues.length === 0;
   const unreadNotifications = notifications.filter((item) => !item.is_read);
   const readNotifications = notifications.filter((item) => item.is_read);
+  const currentTaskRunning =
+    !!selectedThesis?.current_version?.latest_task &&
+    (selectedThesis.current_version.latest_task.status === "pending" ||
+      selectedThesis.current_version.latest_task.status === "running");
+  const uploadBlockedByReview = selectedThesis?.status === "mentor_review";
+  const continueCurrentThesis = !!selectedThesis && selectedThesis.status !== "approved";
 
   const renderNotification = (item: Notification) => (
     <div
@@ -442,6 +489,25 @@ export function Student({ user, authChecked }: StudentProps) {
     </div>
   );
 
+  const renderVersionButton = (version: ThesisVersionTask) => (
+    <button
+      key={version.id}
+      type="button"
+      className={`history-task-item ${selectedVersionId === version.id ? "active" : ""}`}
+      onClick={() => setSelectedVersionId(version.id)}
+    >
+      <div className="history-task-row">
+        <strong>第 {version.version_no} 版</strong>
+        <span className={`task-badge task-${version.latest_task?.status ?? "pending"}`}>
+          {version.latest_task ? formatTaskStatus(version.latest_task.status) : "未分析"}
+        </span>
+      </div>
+      <p className="meta">
+        {formatStage(version.stage)} · 提交时间：{formatTime(version.submitted_at)}
+      </p>
+    </button>
+  );
+
   return (
     <section className="section">
       <h2 className="section-title">学生工作台</h2>
@@ -451,7 +517,7 @@ export function Student({ user, authChecked }: StudentProps) {
           <div className="dashboard-hero-bar">
             <div className="dashboard-hero-copy">
               <p className="eyebrow">当前处理论文</p>
-              <h3>{task ? getTaskLabel(task) : "暂无处理中的论文"}</h3>
+              <h3>{getTaskLabel(selectedThesis)}</h3>
               <p className="meta">{getCurrentPaperHint()}</p>
             </div>
           </div>
@@ -462,37 +528,35 @@ export function Student({ user, authChecked }: StudentProps) {
             <div className="card">
               <div className="section-heading compact">
                 <div>
-                  <p className="eyebrow">当前稿件</p>
+                  <p className="eyebrow">当前论文任务</p>
                 </div>
-                <span className={`task-badge task-${task?.status ?? "pending"}`}>
-                  {task ? formatTaskStatus(task.status) : "未加载"}
+                <span className={`task-badge task-${selectedThesis?.status ?? "pending"}`}>
+                  {selectedThesis ? formatThesisStatus(selectedThesis.status) : "未加载"}
                 </span>
               </div>
 
-              {task ? (
+              {selectedThesis ? (
                 <div className="task-detail">
                   <div className="task-meta-grid">
                     <div className="task-meta-card">
-                      <span className="meta">提交时间</span>
-                      <strong>{formatTime(task.created_at)}</strong>
+                      <span className="meta">论文状态</span>
+                      <strong>{formatThesisStatus(selectedThesis.status)}</strong>
                     </div>
                     <div className="task-meta-card">
-                      <span className="meta">开始分析</span>
-                      <strong>{formatTime(task.started_at)}</strong>
-                    </div>
-                    <div className="task-meta-card">
-                      <span className="meta">完成时间</span>
-                      <strong>{formatTime(task.finished_at)}</strong>
-                    </div>
-                    <div className="task-meta-card">
-                      <span className="meta">导师阶段</span>
+                      <span className="meta">当前版本</span>
                       <strong>
-                        {result
-                          ? isReadyForMentor(task)
-                            ? "可以提交导师"
-                            : "建议修改后提交"
-                          : "等待分析结果"}
+                        {selectedVersion
+                          ? `第 ${selectedVersion.version_no} 版（${formatStage(selectedVersion.stage)}）`
+                          : "暂无"}
                       </strong>
+                    </div>
+                    <div className="task-meta-card">
+                      <span className="meta">版本提交时间</span>
+                      <strong>{formatTime(selectedVersion?.submitted_at)}</strong>
+                    </div>
+                    <div className="task-meta-card">
+                      <span className="meta">AI 分析状态</span>
+                      <strong>{task ? formatTaskStatus(task.status) : "暂无"}</strong>
                     </div>
                   </div>
 
@@ -505,7 +569,11 @@ export function Student({ user, authChecked }: StudentProps) {
                           <p className="meta">总体评估：{result.overall_assessment}</p>
                           <p className="meta">
                             下一步判断：
-                            {isReadyForMentor(task) ? "可以进入导师评审" : "建议继续修改后再提交"}
+                            {selectedThesis.status === "mentor_review"
+                              ? "等待导师审核"
+                              : isReadyForMentor(task)
+                                ? "可以进入导师评审"
+                                : "建议继续修改后再提交"}
                           </p>
                         </div>
                         <div className="task-summary-card overview-metrics">
@@ -593,17 +661,17 @@ export function Student({ user, authChecked }: StudentProps) {
                                         )}{" "}
                                         · {issue.issue_type}
                                       </strong>
-                                    <span
-                                      className={`issue-severity ${getSeverityClassName(
-                                        issue.severity
-                                      )}`}
-                                    >
-                                      {formatSeverity(issue.severity)}
-                                    </span>
+                                      <span
+                                        className={`issue-severity ${getSeverityClassName(
+                                          issue.severity
+                                        )}`}
+                                      >
+                                        {formatSeverity(issue.severity)}
+                                      </span>
                                     </div>
                                     <p>{issue.description}</p>
                                     <p className="meta">建议修改：{issue.suggestion}</p>
-                                    {(low || isDevMode) && (
+                                    {(low || isDevMode) && selectedThesis.status !== "mentor_review" ? (
                                       <button
                                         className="ghost"
                                         style={{ marginTop: 8, fontSize: 12 }}
@@ -612,12 +680,14 @@ export function Student({ user, authChecked }: StudentProps) {
                                       >
                                         忽略此问题{isDevMode && !low ? " (开发)" : ""}
                                       </button>
-                                    )}
+                                    ) : null}
                                   </div>
                                 );
                               })
                             )}
-                            {allPriorityIssuesCleared && !isReadyForMentor(task) ? (
+                            {allPriorityIssuesCleared &&
+                            !isReadyForMentor(task) &&
+                            selectedThesis.status !== "mentor_review" ? (
                               <div className="mentor-submit-panel">
                                 <p className="meta">
                                   所有中高优先级问题已处理，可以提交进入导师评审。
@@ -643,7 +713,7 @@ export function Student({ user, authChecked }: StudentProps) {
                             alignItems: "center",
                             gap: 8,
                           }}
-                          onClick={() => setChecksExpanded((v) => !v)}
+                          onClick={() => setChecksExpanded((value) => !value)}
                         >
                           <span>{checksExpanded ? "▾" : "▸"} 逐项校验结果</span>
                           <span
@@ -696,7 +766,7 @@ export function Student({ user, authChecked }: StudentProps) {
                         ) : null}
                       </div>
                     </div>
-                  ) : task.status === "failed" ? (
+                  ) : task?.status === "failed" ? (
                     <div className="task-summary-card">
                       <h4>分析失败</h4>
                       <p className="meta">{task.error_message || "未知错误，请稍后重试。"}</p>
@@ -705,16 +775,16 @@ export function Student({ user, authChecked }: StudentProps) {
                     <div className="task-summary-card">
                       <h4>等待分析结果</h4>
                       <p className="meta">
-                        任务还没有返回结构化结果。你可以过一会刷新，或者先查看通知中心。
+                        当前版本还没有返回结构化结果。你可以稍后刷新，或先查看通知中心。
                       </p>
                     </div>
                   )}
                 </div>
               ) : (
                 <div className="task-empty">
-                  <h4>还没有加载任何任务</h4>
+                  <h4>还没有加载任何论文任务</h4>
                   <p className="meta">
-                    如果这是第一次提交，可以直接在右侧上传新稿。提交后，这里会自动显示分析进度和修改建议。
+                    首次提交后，这里会按同一篇论文展示多个版本、AI 分析和导师审核状态。
                   </p>
                 </div>
               )}
@@ -725,13 +795,18 @@ export function Student({ user, authChecked }: StudentProps) {
             <div className="card">
               <div className="section-heading compact">
                 <div>
-                  <p className="eyebrow">提交新稿</p>
+                  <p className="eyebrow">{continueCurrentThesis ? "提交新版本" : "创建论文任务"}</p>
                 </div>
               </div>
-              {hasActiveTask ? (
+              {uploadBlockedByReview ? (
                 <div className="task-empty">
-                  <h4>当前有分析任务正在进行</h4>
-                  <p className="meta">请等待当前分析完成后再提交新稿。</p>
+                  <h4>当前版本正在导师审核中</h4>
+                  <p className="meta">导师处理完成前，不允许再次提交新版本。</p>
+                </div>
+              ) : currentTaskRunning ? (
+                <div className="task-empty">
+                  <h4>当前有 AI 分析任务正在进行</h4>
+                  <p className="meta">请等待当前版本分析完成后再提交下一版。</p>
                 </div>
               ) : (
                 <form className="form draft-form" onSubmit={handleDraftSubmit}>
@@ -741,7 +816,7 @@ export function Student({ user, authChecked }: StudentProps) {
                       id="draft-title"
                       value={title}
                       onChange={(event) => setTitle(event.target.value)}
-                      placeholder="论文草稿标题"
+                      placeholder="论文标题"
                       required
                     />
                   </div>
@@ -762,7 +837,11 @@ export function Student({ user, authChecked }: StudentProps) {
                     </label>
                   </div>
                   <button className="primary" type="submit" disabled={loading}>
-                    {loading ? "正在提交..." : "提交"}
+                    {loading
+                      ? "正在提交..."
+                      : continueCurrentThesis
+                        ? "提交新版本"
+                        : "创建并提交"}
                   </button>
                 </form>
               )}
@@ -812,43 +891,41 @@ export function Student({ user, authChecked }: StudentProps) {
             <div className="card">
               <div className="section-heading compact">
                 <div>
-                  <p className="eyebrow">历史任务</p>
+                  <p className="eyebrow">论文与版本</p>
                 </div>
+                <button className="ghost" type="button" onClick={handleTaskRefresh} disabled={loading}>
+                  刷新
+                </button>
               </div>
 
               <div className="history-task-list">
-                {historyTasks.length === 0 ? (
-                  <p className="meta">当前还没有历史任务记录。</p>
+                {theses.length === 0 ? (
+                  <p className="meta">当前还没有论文任务记录。</p>
                 ) : (
-                  historyTasks.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={`history-task-item ${task?.id === item.id ? "active" : ""}`}
-                      onClick={async () => {
-                        if (!item.result && item.status === "completed") {
-                          try {
-                            const full = await apiFetch<AnalysisTask>(`/tasks/${item.id}`);
-                            setTask(full);
-                            setHistoryTasks((prev) =>
-                              prev.map((t) => (t.id === full.id ? full : t))
-                            );
-                          } catch {
-                            setTask(item);
-                          }
-                        } else {
-                          setTask(item);
-                        }
-                      }}
-                    >
-                      <div className="history-task-row">
-                        <strong>{getTaskLabel(item)}</strong>
-                        <span className={`task-badge task-${item.status}`}>
-                          {formatTaskStatus(item.status)}
-                        </span>
-                      </div>
-                      <p className="meta">提交时间：{formatTime(item.created_at)}</p>
-                    </button>
+                  theses.map((item) => (
+                    <div key={item.id} className="issue-item">
+                      <button
+                        type="button"
+                        className={`history-task-item ${selectedThesisId === item.id ? "active" : ""}`}
+                        onClick={() => {
+                          setSelectedThesisId(item.id);
+                          setSelectedVersionId(item.current_version?.id ?? item.versions[0]?.id ?? null);
+                        }}
+                      >
+                        <div className="history-task-row">
+                          <strong>{item.title}</strong>
+                          <span className={`task-badge task-${item.status}`}>
+                            {formatThesisStatus(item.status)}
+                          </span>
+                        </div>
+                        <p className="meta">
+                          共 {item.versions.length} 个版本 · 更新时间：{formatTime(item.updated_at)}
+                        </p>
+                      </button>
+                      {selectedThesisId === item.id ? (
+                        <div style={{ marginTop: 8 }}>{item.versions.map(renderVersionButton)}</div>
+                      ) : null}
+                    </div>
                   ))
                 )}
               </div>

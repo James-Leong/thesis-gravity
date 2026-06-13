@@ -162,6 +162,7 @@ a {
   z-index: 1;
   margin-top: 24px;
   flex: 1;
+  padding-bottom: 24px;
 }
 
 .hero {
@@ -224,6 +225,26 @@ a {
 .section-title {
   font-size: 22px;
   margin-bottom: 16px;
+}
+
+.auth-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 220px);
+  padding: 20px 0;
+}
+
+.auth-section .section-title {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.auth-section .card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px;
 }
 
 .section-heading {
@@ -379,6 +400,18 @@ a {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--stroke);
+}
+
+.identity-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.identity-email {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .task-summary-card {
@@ -765,6 +798,21 @@ button.ghost {
   border-color: var(--stroke);
 }
 
+.pdf-preview-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pdf-preview-action {
+  min-height: 38px;
+  padding: 9px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .notice {
   padding: 12px 14px;
   border-radius: 12px;
@@ -783,13 +831,156 @@ button.ghost {
   font-size: 13px;
 }
 
+.mentor-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.mentor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.72);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.mentor-tab.active {
+  background: rgba(43, 83, 255, 0.1);
+  border-color: rgba(43, 83, 255, 0.4);
+  color: #2842a6;
+}
+
+.mentor-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mentor-dashboard {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.mentor-sidebar {
+  align-self: start;
+}
+
+.mentor-main-column {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.mentor-review-list {
+  display: grid;
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.mentor-review-item {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.mentor-review-item.active {
+  border-color: rgba(43, 83, 255, 0.28);
+  background: rgba(43, 83, 255, 0.08);
+}
+
+.mentor-review-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.mentor-review-row strong {
+  min-width: 0;
+  line-height: 1.45;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mentor-review-form {
+  gap: 18px;
+}
+
+.mentor-decision-options {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mentor-decision-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.mentor-decision-option input {
+  width: auto;
+}
+
+.mentor-decision-option.selected {
+  border-color: rgba(43, 83, 255, 0.4);
+  background: rgba(43, 83, 255, 0.1);
+}
+
+.profile-layout {
+  display: grid;
+  gap: 20px;
+}
+
 .footer {
-  margin-top: 40px;
+  margin-top: 64px;
   display: flex;
   justify-content: space-between;
   font-size: 12px;
   color: var(--muted);
   z-index: 1;
+}
+
+@media (max-width: 900px) {
+  .mentor-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .mentor-decision-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 @keyframes fadeUp {
