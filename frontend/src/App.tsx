@@ -97,7 +97,7 @@ export function App() {
 
         <main className="content">
           <Routes>
-            <Route path="/" element={<Home />} />
+            <Route path="/" element={<Home user={user} authChecked={authChecked} />} />
             <Route path="/login" element={<Login onAuth={handleAuth} />} />
             <Route path="/register" element={<Register />} />
             <Route
