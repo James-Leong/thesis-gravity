@@ -12,7 +12,8 @@ INSTRUCTIONS = (
     "local segment summaries, and selected anchor snippets, not the full verbatim text. Do not check sentence-level wording "
     "or exact quotations. Focus only on overall logic and consistency: whether abstract, method, experiments, and conclusion "
     "form a coherent chain; whether the claimed contributions match the body; whether chapters appear to repeat or skip key steps; "
-    "and whether there are unresolved cross-section contradictions. Be concise and explicit when evidence is weak."
+    "and whether there are unresolved cross-section contradictions. Be concise and explicit when evidence is weak. "
+    "Important: all output must be in Chinese. Write the summary, consistency_findings, and next_focus in Chinese."
 )
 
 

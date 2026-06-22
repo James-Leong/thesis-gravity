@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import fitz
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from app.schemas.analysis import AnalysisCheck
@@ -23,6 +25,22 @@ class VisualPageIndex:
     caption_pages: list[int]
     reference_pages: list[int]
     candidate_pages: list[int]
+    image_pages: list[int]
+
+
+def _is_likely_toc_page(page: ExtractedPage) -> bool:
+    """Heuristic to skip table-of-contents / figure-directory pages."""
+    if any(keyword in page.text for keyword in ("目录", "图目录", "表目录", "Contents")):
+        return True
+    # TOC lines are dominated by dots and page numbers.
+    dot_leader_lines = 0
+    for line in page.text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.count(".") >= 4 and re.search(r"\d+\s*$", stripped):
+            dot_leader_lines += 1
+    return dot_leader_lines >= 3
 
 
 SENSITIVE_PAGE_PATTERNS = {
@@ -84,25 +102,47 @@ def evaluate_rule_check(
     )
 
 
-def build_visual_page_index(pages: list[ExtractedPage]) -> VisualPageIndex:
-    caption_pages = sorted({page.number for page in pages if _page_has_figure_table_caption(page)})
-    reference_pages = sorted({page.number for page in pages if _page_has_figure_table_reference(page)})
+def build_visual_page_index(pages: list[ExtractedPage], pdf_path: Path | None = None) -> VisualPageIndex:
+    caption_pages = sorted(
+        {page.number for page in pages if not _is_likely_toc_page(page) and _page_has_figure_table_caption(page)}
+    )
+    reference_pages = sorted(
+        {page.number for page in pages if not _is_likely_toc_page(page) and _page_has_figure_table_reference(page)}
+    )
 
     candidate_pages: set[int] = set()
     max_page = max((page.number for page in pages), default=0)
+    toc_page_set = {page.number for page in pages if _is_likely_toc_page(page)}
     for page_number in caption_pages:
         for neighbor in (page_number - 1, page_number, page_number + 1):
-            if 1 <= neighbor <= max_page:
+            if 1 <= neighbor <= max_page and neighbor not in toc_page_set:
                 candidate_pages.add(neighbor)
     for page_number in reference_pages:
         for neighbor in (page_number, page_number + 1):
-            if 1 <= neighbor <= max_page:
+            if 1 <= neighbor <= max_page and neighbor not in toc_page_set:
                 candidate_pages.add(neighbor)
+
+    image_pages: list[int] = []
+    if pdf_path is not None and pdf_path.exists():
+        try:
+            doc = fitz.open(str(pdf_path))
+            for page in pages:
+                if _is_likely_toc_page(page):
+                    continue
+                pdf_page = doc.load_page(page.number - 1)
+                # Use raster images as a strong signal of figure/table pages.
+                # Vector-only charts are rarer and harder to distinguish from text headers.
+                if pdf_page.get_images(full=True):
+                    image_pages.append(page.number)
+            doc.close()
+        except Exception:
+            pass
 
     return VisualPageIndex(
         caption_pages=caption_pages,
         reference_pages=reference_pages,
         candidate_pages=sorted(candidate_pages),
+        image_pages=sorted(image_pages),
     )
 
 
@@ -137,22 +177,143 @@ def _evaluate_blind_review_redaction(definition: ChecklistDefinition, pages: lis
 
 
 def _evaluate_english_title_case(definition: ChecklistDefinition, pages: list[ExtractedPage]) -> AnalysisCheck:
+    """Check English title case on the cover/abstract page title line.
+
+    Strategy:
+    1. Try to find a title line on the cover page: mostly ASCII, standalone,
+       centered-ish (not a paragraph), and short.
+    2. Fall back to the first page that has an ``Abstract`` heading and look for
+       a standalone English line near that heading.
+    3. Only if both fail, fall back to a heuristic over the first 3 pages.
+    """
+    stopwords = {"a", "an", "the", "and", "or", "of", "to", "for", "in", "on", "with"}
+
+    def _looks_like_title_line(line: str, page_width: float | None = None) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        # Exclude obvious non-title lines.
+        lower = stripped.lower()
+        if lower.startswith(("abstract", "key words", "keywords", "key words:", "keywords:")):
+            return False
+        # A title line is mostly ASCII words, no sentence punctuation at the end,
+        # and does not start with common sentence starters.
+        sentence_starters = {
+            "with",
+            "this",
+            "in",
+            "the",
+            "as",
+            "it",
+            "there",
+            "these",
+            "those",
+            "however",
+            "therefore",
+            "furthermore",
+            "moreover",
+            "thus",
+            "hence",
+            "and",
+            "are",
+            "new",
+        }
+        ascii_words = re.findall(r"[A-Za-z][A-Za-z'-]*", stripped)
+        ascii_text = " ".join(ascii_words)
+        if len(ascii_words) < 4 or len(ascii_text) < 20 or len(ascii_text) > 120:
+            return False
+        if ascii_words[0].lower() in sentence_starters:
+            return False
+        if stripped[-1] in {".", ",", ";", "?", "!"}:
+            return False
+        # Substantial Chinese text makes it unlikely to be the English title.
+        if len(re.findall(r"[一-鿿]", stripped)) > 2:
+            return False
+        # A title line should be a short, standalone line; long wrapped paragraphs are not titles.
+        if len(stripped) > 80:
+            return False
+        # Require a high ratio of ASCII letters to total characters, i.e. little punctuation/numbers.
+        if len(ascii_text) / len(stripped) < 0.75:
+            return False
+        return True
+
+    def _is_centered(block_x0: float, block_x1: float, page_width: float) -> bool:
+        if page_width <= 0:
+            return False
+        left_margin = block_x0
+        right_margin = page_width - block_x1
+        # Allow some tolerance; centered means left/right margins are roughly equal.
+        return abs(left_margin - right_margin) / page_width < 0.25
+
+    # Pass 1: cover page (first page). Use text blocks to locate standalone title lines.
+    if pages:
+        cover = pages[0]
+        try:
+            import fitz
+
+            doc = fitz.open(str(cover.text))  # type: ignore[arg-type]
+        except Exception:
+            doc = None
+        try:
+            if doc is None:
+                # Fallback: inspect text lines only.
+                for line in cover.text.splitlines():
+                    if _looks_like_title_line(line):
+                        candidate_lines = [line.strip()]
+                        break
+                else:
+                    candidate_lines = []
+            else:
+                # We cannot access the original PDF here; use heuristics on lines.
+                candidate_lines = []
+                for line in cover.text.splitlines():
+                    if _looks_like_title_line(line):
+                        candidate_lines.append(line.strip())
+        finally:
+            if doc is not None:
+                doc.close()
+        if candidate_lines:
+            title_line = candidate_lines[0]
+            words = re.findall(r"[A-Za-z][A-Za-z'-]*", title_line)
+            invalid_words = [word for word in words if word.lower() not in stopwords and word[0].islower()]
+            if invalid_words:
+                return _failed_check(
+                    definition,
+                    pages=[1],
+                    rationale=f"识别到英文题目行 `{title_line}`，其中存在未按标题式大写的实词：{', '.join(invalid_words[:4])}。",
+                    suggestion="请检查英文题目，确保主要实词首字母大写。",
+                )
+            return _passed_check(
+                definition,
+                pages=[1],
+                rationale=f"识别到英文题目行 `{title_line}`，未发现明显的实词首字母小写问题。",
+            )
+
+    # Pass 2: look for a standalone English title near the "Abstract" heading (pages 1-3).
     candidate_lines: list[str] = []
     for page in pages[:3]:
-        for line in page.text.splitlines():
-            ascii_words = re.findall(r"[A-Za-z][A-Za-z'-]*", line)
-            if len(ascii_words) >= 4 and len(" ".join(ascii_words)) >= 20:
-                candidate_lines.append(line.strip())
+        lines = page.text.splitlines()
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.lower() == "abstract" or stripped == "英文摘要":
+                # Look at the next few lines for a standalone English title.
+                for candidate in lines[index + 1 : index + 6]:
+                    if _looks_like_title_line(candidate):
+                        candidate_lines.append(candidate.strip())
+                        break
+            if _looks_like_title_line(stripped):
+                candidate_lines.append(stripped)
+        if candidate_lines:
+            break
 
     if not candidate_lines:
         return _manual_review_check(
             definition,
-            "前 3 页中未可靠识别出英文题目，无法用规则判断大小写是否规范。",
+            "前 3 页中未可靠识别出独立的英文题目行，无法用规则判断大小写是否规范。",
         )
 
     title_line = candidate_lines[0]
     words = re.findall(r"[A-Za-z][A-Za-z'-]*", title_line)
-    stopwords = {"a", "an", "the", "and", "or", "of", "to", "for", "in", "on", "with"}
     invalid_words = [word for word in words if word.lower() not in stopwords and word[0].islower()]
     if invalid_words:
         return _failed_check(
@@ -213,7 +374,7 @@ def _evaluate_reference_statistics(definition: ChecklistDefinition, pages: list[
 
     degree = _infer_degree("\n".join(page.text for page in pages[:8]))
     minimum = 90 if degree == "doctor" else 40
-    english_count = sum(_looks_like_english_entry(entry.text) for entry in references)
+    foreign_count = sum(_looks_like_foreign_entry(entry.text) for entry in references)
     recent_count = sum(_extract_year(entry.text) >= 2021 for entry in references if _extract_year(entry.text))
     website_count = sum("http" in entry.text.lower() or "www." in entry.text.lower() for entry in references)
 
@@ -222,8 +383,8 @@ def _evaluate_reference_statistics(definition: ChecklistDefinition, pages: list[
         failures.append(
             f"参考文献数量仅 {len(references)} 篇，低于 {_degree_label(degree or 'master')}论文建议下限 {minimum} 篇"
         )
-    if english_count == 0:
-        failures.append("未识别到明显的英文参考文献")
+    if foreign_count == 0:
+        failures.append("未识别到明显的外文参考文献")
     if recent_count == 0:
         failures.append("未识别到近五年的参考文献")
     if website_count > max(3, len(references) // 5):
@@ -235,14 +396,14 @@ def _evaluate_reference_statistics(definition: ChecklistDefinition, pages: list[
             definition,
             pages=reference_pages,
             rationale="；".join(failures) + "。",
-            suggestion="请补充近五年和英文文献，控制网站引用占比，并确保参考文献总量达到论文要求。",
+            suggestion="请补充近五年和外文文献，控制网站引用占比，并确保参考文献总量达到论文要求。",
         )
 
     return _passed_check(
         definition,
         pages=reference_pages,
         rationale=(
-            f"识别到 {len(references)} 篇参考文献，其中英文文献 {english_count} 篇，近五年文献 {recent_count} 篇，"
+            f"识别到 {len(references)} 篇参考文献，其中外文文献 {foreign_count} 篇，近五年文献 {recent_count} 篇，"
             f"网站类引用 {website_count} 条，未发现明显统计性风险。"
         ),
     )
@@ -437,12 +598,35 @@ class NumberingIssue:
     message: str
 
 
+def _find_reference_start_index(pages: list[ExtractedPage]) -> int | None:
+    """Locate the real reference section, not the table-of-contents entry.
+
+    Strategy: use the last page that contains the heading "参考文献", and
+    verify that at least one numbered reference entry appears soon after.
+    If the last occurrence yields no entries, fall back to earlier occurrences.
+    """
+    candidate_indices = [index for index, page in enumerate(pages) if "参考文献" in page.text]
+    if not candidate_indices:
+        return None
+
+    entry_pattern = re.compile(r"^\s*[\[\(]?\d{1,3}[\]\)\.、]\s*\S")
+    # Try candidates from the end (most likely the real section).
+    for start_index in reversed(candidate_indices):
+        found_entries = 0
+        for page in pages[start_index : start_index + 3]:
+            for line in page.text.splitlines():
+                if entry_pattern.search(_normalize_reference_numbering_text(line)):
+                    found_entries += 1
+                    if found_entries >= 2:
+                        return start_index
+        # Even a single entry is a strong signal compared with a bare TOC line.
+        if found_entries >= 1:
+            return start_index
+    return candidate_indices[-1]
+
+
 def _extract_reference_entries(pages: list[ExtractedPage]) -> list[ReferenceEntry]:
-    start_index = None
-    for index, page in enumerate(pages):
-        if "参考文献" in page.text:
-            start_index = index
-            break
+    start_index = _find_reference_start_index(pages)
     if start_index is None:
         return []
 
@@ -452,10 +636,10 @@ def _extract_reference_entries(pages: list[ExtractedPage]) -> list[ReferenceEntr
     current_page = pages[start_index].number
     for page in pages[start_index:]:
         for line in page.text.splitlines():
-            line = line.strip()
+            line = _normalize_reference_numbering_text(line).strip()
             if not line:
                 continue
-            match = re.match(r"^\[?(\d{1,3})[\]\.．、)]\s*(.*)$", line)
+            match = re.match(r"^\s*[\[\(]?(\d{1,3})[\]\)\.、]\s*(.*)$", line)
             if match:
                 if current_index is not None:
                     entries.append(
@@ -483,14 +667,39 @@ def _extract_reference_entries(pages: list[ExtractedPage]) -> list[ReferenceEntr
 
 
 def _extract_inline_citations(pages: list[ExtractedPage]) -> list[tuple[int, int]]:
+    """Extract in-text citations such as [1] or full-width ［1］ before the reference section."""
     citations: list[tuple[int, int]] = []
     pattern = re.compile(r"\[(\d{1,3})\]")
-    for page in pages:
-        if "参考文献" in page.text:
-            break
-        for match in pattern.finditer(page.text):
+    ref_start = _find_reference_start_index(pages)
+    for page in pages[:ref_start]:
+        normalized_text = _normalize_reference_numbering_text(page.text)
+        for match in pattern.finditer(normalized_text):
             citations.append((int(match.group(1)), page.number))
     return citations
+
+
+def _normalize_reference_numbering_text(text: str) -> str:
+    return text.translate(
+        str.maketrans(
+            {
+                "［": "[",
+                "］": "]",
+                "（": "(",
+                "）": ")",
+                "．": ".",
+                "０": "0",
+                "１": "1",
+                "２": "2",
+                "３": "3",
+                "４": "4",
+                "５": "5",
+                "６": "6",
+                "７": "7",
+                "８": "8",
+                "９": "9",
+            }
+        )
+    )
 
 
 def _page_has_figure_table_caption(page: ExtractedPage) -> bool:
@@ -515,19 +724,51 @@ def _page_has_figure_table_reference(page: ExtractedPage) -> bool:
 def _extract_figure_table_captions(pages: list[ExtractedPage]) -> list[CaptionEntry]:
     captions: list[CaptionEntry] = []
     pattern = re.compile(r"(图|表)\s*([0-9]{1,2})[-.．]([0-9]{1,3})")
+    dot_leader_pattern = re.compile(r"\.{4,}")
+    seen_lines: set[tuple[str, int, str]] = set()
     for page in pages:
+        if _is_likely_toc_page(page):
+            continue
         for line in page.text.splitlines():
+            stripped_line = line.strip()
+            if dot_leader_pattern.search(line):
+                # Skip table-of-contents lines that repeat captions with trailing page numbers.
+                continue
             for match in pattern.finditer(line):
+                if not _looks_like_caption_line(stripped_line, match):
+                    continue
+                kind = match.group(1)
+                chapter = int(match.group(2))
+                sequence = int(match.group(3))
+                label = f"{kind}{chapter}-{sequence}"
+                key = (label, page.number, stripped_line)
+                if key in seen_lines:
+                    continue
+                seen_lines.add(key)
                 captions.append(
                     CaptionEntry(
-                        kind=match.group(1),
-                        label=f"{match.group(1)}{match.group(2)}-{match.group(3)}",
-                        chapter=int(match.group(2)),
-                        sequence=int(match.group(3)),
+                        kind=kind,
+                        label=label,
+                        chapter=chapter,
+                        sequence=sequence,
                         page=page.number,
                     )
                 )
     return captions
+
+
+def _looks_like_caption_line(stripped_line: str, match: re.Match[str]) -> bool:
+    if not stripped_line:
+        return False
+    # Captions should begin with the figure/table number. In-text references
+    # such as "由表4.1及图4.1可以看出" must not be treated as new captions.
+    if match.start() != 0:
+        return False
+    if not re.match(r"^(图|表)\s*\d{1,2}[-.．]\d{1,3}(?:\s+|[:：])\S+", stripped_line):
+        return False
+    # Very long lines are usually prose that begins with a reference rather than
+    # a concise title.
+    return len(stripped_line) <= 100
 
 
 def _find_numbering_issues(captions: list[CaptionEntry]) -> list[NumberingIssue]:
@@ -562,10 +803,11 @@ def _has_non_monotonic_citations(numbers: list[int]) -> bool:
     return regressions >= 3
 
 
-def _looks_like_english_entry(text: str) -> bool:
-    ascii_letters = len(re.findall(r"[A-Za-z]", text))
-    cjk_letters = len(re.findall(r"[\u4e00-\u9fff]", text))
-    return ascii_letters > cjk_letters
+def _looks_like_foreign_entry(text: str) -> bool:
+    # Count Latin/Cyrillic/Greek letters as likely foreign-language content.
+    non_cjk_letters = len(re.findall(r"[A-Za-z]", text))
+    cjk_letters = len(re.findall("[\u4e00-\u9fff]", text))
+    return non_cjk_letters > cjk_letters
 
 
 def _extract_year(text: str) -> int | None:

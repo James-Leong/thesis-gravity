@@ -12,7 +12,8 @@ INSTRUCTIONS = (
     "not the complete thesis. Do not nitpick wording, punctuation, or line-level phrasing. "
     "Focus on the local section logic: whether the segment has a clear purpose, whether arguments and evidence connect, "
     "whether concepts are left undefined, whether there are abrupt jumps or repeated discussion, and whether the segment "
-    "appears to complete its intended subtask. Be concise and conservative."
+    "appears to complete its intended subtask. Be concise and conservative. "
+    "Important: all output must be in Chinese. Write the summary, major_topics, and logic_risks in Chinese."
 )
 
 

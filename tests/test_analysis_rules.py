@@ -35,13 +35,51 @@ def test_reference_citation_rule_fails_when_body_missing_entries() -> None:
     )
     pages = [
         ExtractedPage(number=1, text="如文献[1]所示，方法有效。"),
-        ExtractedPage(number=2, text="参考文献\n[1] Author A. Paper A. 2022.\n[2] Author B. Paper B. 2021."),
+        ExtractedPage(number=2, text="另一个观点见［2］。"),
+        ExtractedPage(number=3, text="参考文献\n[1] Author A. Paper A. 2022.\n[2] Author B. Paper B. 2021."),
     ]
 
-    result = evaluate_rule_check(definition, pages, total_pages=2)
+    result = evaluate_rule_check(definition, pages, total_pages=3)
 
-    assert result.status == "failed"
-    assert "未在正文引用" in result.rationale
+    assert result.status == "passed"
+    assert "55" not in result.rationale
+
+
+def test_reference_entries_skip_toc_and_find_real_section() -> None:
+    pages = [
+        ExtractedPage(
+            number=1,
+            text="目录\n参考文献 ............................. 5\n第一章 绪论 .............................. 1",
+        ),
+        ExtractedPage(number=2, text="第一章 绪论\n本文[1]引用了文献。"),
+        ExtractedPage(number=3, text="第二章 相关工作\n如［2］所述。"),
+        ExtractedPage(number=4, text="结论"),
+        ExtractedPage(number=5, text="参考文献\n[1] Author A. Paper A. 2022.\n[2] Author B. Paper B. 2021."),
+    ]
+    from app.services.analysis_rules import _extract_reference_entries, _extract_inline_citations
+
+    refs = _extract_reference_entries(pages)
+    assert len(refs) == 2
+    assert refs[0].index == 1
+    assert refs[-1].index == 2
+
+    citations = _extract_inline_citations(pages)
+    assert len(citations) == 2
+    assert {c[0] for c in citations} == {1, 2}
+
+
+def test_reference_entries_normalize_full_width_numbering() -> None:
+    pages = [
+        ExtractedPage(number=1, text="正文引用见［１］和［２］。"),
+        ExtractedPage(number=2, text="参考文献\n［１］ Author A. Paper A. 2022.\n［２］ Author B. Paper B. 2021."),
+    ]
+    from app.services.analysis_rules import _extract_reference_entries, _extract_inline_citations
+
+    refs = _extract_reference_entries(pages)
+    citations = _extract_inline_citations(pages)
+
+    assert [ref.index for ref in refs] == [1, 2]
+    assert [citation[0] for citation in citations] == [1, 2]
 
 
 def test_page_count_rule_passes_for_master_thesis_over_threshold() -> None:
@@ -77,4 +115,28 @@ def test_build_visual_page_index_prefers_caption_and_reference_pages() -> None:
 
     assert index.caption_pages == [3, 5]
     assert index.reference_pages == [2]
-    assert index.candidate_pages == [2, 3, 4, 5, 6]
+    assert 6 not in index.candidate_pages
+    assert index.image_pages == []
+
+
+def test_figure_table_caption_extraction_ignores_inline_references() -> None:
+    pages = [
+        ExtractedPage(number=28, text="图4.1 M 公司基于财务指标的盈利能力评价\n表4.1 M 公司总资产收益率（%）"),
+        ExtractedPage(
+            number=29,
+            text="图4.2 M 公司总资产收益率折线\n由表4.1 及图4.1 可以看出趋势。\n表4.2 M 公司净资产收益率（%）",
+        ),
+        ExtractedPage(number=30, text="图4.3 M 公司净资产收益率折线\n通过图4.2 我们可以清晰地看出变化。"),
+    ]
+    from app.services.analysis_rules import _extract_figure_table_captions, _find_numbering_issues
+
+    captions = _extract_figure_table_captions(pages)
+    assert [(caption.label, caption.page) for caption in captions] == [
+        ("图4-1", 28),
+        ("表4-1", 28),
+        ("图4-2", 29),
+        ("表4-2", 29),
+        ("图4-3", 30),
+    ]
+    assert _find_numbering_issues([caption for caption in captions if caption.kind == "图"]) == []
+    assert _find_numbering_issues([caption for caption in captions if caption.kind == "表"]) == []

@@ -45,6 +45,7 @@ cp .env.example .env
 - `VISION_LLM_BASE_URL`
 - `LOCAL_REVIEW_PAGE_BATCH_SIZE`
 - `MAX_CHECK_ITEMS_PER_BATCH`
+- `MAX_VISUAL_IMAGES_PER_BATCH`
 - `LOG_LEVEL`
 - `REFERENCE_DOC_PATH`
 
@@ -103,6 +104,14 @@ uv run ruff format .
 ./scripts/clean_local_data.sh
 ```
 
+抽取论文 PDF 中的图、表截图到临时目录，便于调试图表视觉检查：
+
+```bash
+PYTHONPATH=. uv run python scripts/extract_figure_table_assets.py source/M公司盈利能力分析及提升策略研究_廖雨璐.pdf /tmp/thesis-gravity-figure-assets
+```
+
+该脚本会生成 `index.json`、`figures/` 和 `tables/`。截图来自自动裁剪，可能包含相邻正文、公式或页码，调试多模态判断时应以图表标题和主体为准。
+
 ## 运行数据
 
 - SQLite 数据库默认位于 `data/app.db`
@@ -114,6 +123,7 @@ uv run ruff format .
 - 论文分析会按 `source/common-problems-for-students.md` 自动拆分为规则层、文本模型层和图表视觉层，并返回逐项校验结果
 - 文本模型层不会再按零散小条目任意切批，而是优先按大的检查方向聚合请求，再在同一次模型返回中展开各个细分检查点，以减少模型调用次数
 - 文本模型与视觉模型请求会把论文片段放在用户输入最前面，并把变化更大的检查要求放在后部，以提高 provider prompt cache 命中率
+- 图表类视觉检查会优先抽取全量图、表截图，按 `MAX_VISUAL_IMAGES_PER_BATCH` 分批送入视觉模型，并附带截图顺序说明；未抽取到图表资产时回退到整页截图，回退时同样按该配置限制单次视觉模型可见图片数
 - 长论文会先按局部页批次做文本段落审阅，再基于全文梗概做一次整体逻辑复核，避免再次退化成单次超长上下文审阅
 - 如果 PDF 总页数超过 `MAX_PAGES`，分析任务会直接失败，并返回超页数错误，而不是只读取前若干页
 - 分析时会先建立“PDF 物理页 -> 论文印刷页码”的映射；返回结果优先展示论文页码，同时保留 PDF 页码用于定位原文件

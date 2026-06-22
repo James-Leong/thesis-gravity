@@ -39,6 +39,7 @@ from app.schemas.analysis import (
     LocalSegmentReview,
 )
 from app.services.analysis_checklist import ChecklistDefinition, extract_query_terms, parse_reference_checklist
+from app.services.figure_table_assets import FigureTableAsset, extract_figure_table_assets
 from app.services.analysis_page_mapping import map_document_page_labels
 from app.services.analysis_rules import ExtractedPage, VisualPageIndex, build_visual_page_index, evaluate_rule_check
 from app.utils.datetime import utcnow
@@ -59,6 +60,14 @@ class DefinitionBatch:
     label: str
     page_numbers: list[int]
     definitions: list[ChecklistDefinition]
+    asset_keys: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class VisionBatchImages:
+    images: list[Image]
+    image_context: list[str]
+    source: str
 
 
 @dataclass
@@ -305,7 +314,7 @@ def analyze_pdf(file_path: str, runtime_context: AnalysisRuntimeContext | None =
     pages = _extract_pdf_pages(pdf_path)
     if not pages:
         raise ValueError("No extractable pages found in the PDF.")
-    visual_page_index = build_visual_page_index(pages)
+    visual_page_index = build_visual_page_index(pages, pdf_path)
     local_segment_reviews = _run_local_segment_reviews(pages, runtime_context)
 
     reference_text = _load_reference_text()
@@ -383,12 +392,7 @@ def _run_text_model_checks(
                     metadata={"definition_count": len(batch.definitions)},
                     agent_getter=get_checklist_reviewer_agent,
                 )
-                content = response.content
-                parsed = (
-                    content
-                    if isinstance(content, ChecklistBatchResult)
-                    else ChecklistBatchResult.model_validate_json(content)
-                )
+                parsed = _parse_checklist_batch_result(response.content)
                 break
             except Exception as exc:
                 logger.warning(
@@ -454,12 +458,16 @@ def _run_vision_model_checks(
             for definition in definitions
         ]
 
-    results: list[AnalysisCheck] = []
+    all_assessments: dict[str, Any] = {}
+    fallback_pages_by_check: dict[str, list[int]] = defaultdict(list)
     with tempfile.TemporaryDirectory(prefix="thesis-vision-") as temp_dir:
         temp_path = Path(temp_dir)
-        for batch in _build_vision_definition_batches(definitions, pages, visual_page_index):
-            rendered_images = _render_pages_to_images(pdf_path, batch.page_numbers, temp_path)
-            prompt = _build_vision_batch_prompt(batch, pages)
+        figure_table_assets = _extract_vision_figure_table_assets(definitions, pdf_path, temp_path)
+        for batch in _build_vision_definition_batches(definitions, pages, visual_page_index, figure_table_assets):
+            for definition in batch.definitions:
+                fallback_pages_by_check[definition.check_id].extend(batch.page_numbers)
+            rendered = _render_vision_batch_images(pdf_path, batch, pages, temp_path, figure_table_assets)
+            prompt = _build_vision_batch_prompt(batch, pages, rendered)
             parsed: ChecklistBatchResult | None = None
             for attempt in range(3):
                 try:
@@ -470,19 +478,15 @@ def _run_vision_model_checks(
                         request_group=batch.label,
                         check_ids=[item.check_id for item in batch.definitions],
                         page_numbers=batch.page_numbers,
-                        images=rendered_images,
+                        images=rendered.images,
                         metadata={
                             "definition_count": len(batch.definitions),
-                            "image_count": len(rendered_images),
+                            "image_count": len(rendered.images),
+                            "image_source": rendered.source,
                         },
                         agent_getter=get_vision_checklist_reviewer_agent,
                     )
-                    content = response.content
-                    parsed = (
-                        content
-                        if isinstance(content, ChecklistBatchResult)
-                        else ChecklistBatchResult.model_validate_json(content)
-                    )
+                    parsed = _parse_checklist_batch_result(response.content)
                     break
                 except Exception as exc:
                     logger.warning(
@@ -496,33 +500,42 @@ def _run_vision_model_checks(
                 # fall through so definitions get fallback status
                 parsed = ChecklistBatchResult()
             assessments = {item.check_id: item for item in parsed.assessments}
+            _deduplicate_assessments(all_assessments, assessments)
 
-            for definition in batch.definitions:
-                assessment = assessments.get(definition.check_id)
-                if assessment is None:
-                    results.append(
-                        _fallback_check(
-                            definition,
-                            status="needs_manual_review",
-                            rationale="视觉模型没有返回这一项的评估结果。",
-                            suggestion="请人工复核对应页面的图表和版式。",
-                        )
-                    )
-                    continue
-                results.append(
-                    AnalysisCheck(
-                        check_id=definition.check_id,
-                        title=definition.title,
-                        source_section=definition.source_section,
-                        requirement=definition.requirement,
-                        layer=definition.layer,
-                        severity=definition.severity,
-                        status=assessment.status,
-                        rationale=assessment.rationale,
-                        suggestion=assessment.suggestion,
-                        pages=sorted(set(page for page in assessment.pages if page >= 1)),
-                    )
+    results: list[AnalysisCheck] = []
+    for definition in definitions:
+        assessment = all_assessments.get(definition.check_id)
+        if assessment is None:
+            fallback_pages = sorted(set(page for page in fallback_pages_by_check[definition.check_id] if page >= 1))
+            results.append(
+                AnalysisCheck(
+                    check_id=definition.check_id,
+                    title=definition.title,
+                    source_section=definition.source_section,
+                    requirement=definition.requirement,
+                    layer=definition.layer,
+                    severity=definition.severity,
+                    status="needs_manual_review",
+                    rationale="视觉模型没有返回这一项的评估结果，已保留候选页面供人工复核。",
+                    suggestion="请人工复核对应页面的图表和版式，或重新触发视觉分析。",
+                    pages=fallback_pages,
                 )
+            )
+            continue
+        results.append(
+            AnalysisCheck(
+                check_id=definition.check_id,
+                title=definition.title,
+                source_section=definition.source_section,
+                requirement=definition.requirement,
+                layer=definition.layer,
+                severity=definition.severity,
+                status=assessment.status,
+                rationale=assessment.rationale,
+                suggestion=assessment.suggestion,
+                pages=sorted(set(page for page in assessment.pages if page >= 1)),
+            )
+        )
 
     return results
 
@@ -572,10 +585,63 @@ def _deduplicate_assessments(
             existing.pages = new_pages
 
 
+def _parse_checklist_batch_result(content: Any) -> ChecklistBatchResult:
+    if isinstance(content, ChecklistBatchResult):
+        return content
+    if isinstance(content, list):
+        return ChecklistBatchResult.model_validate(
+            {"assessments": [_normalize_assessment_payload(item) for item in content]}
+        )
+    if isinstance(content, dict):
+        content = dict(content)
+        if "assessments" in content:
+            if isinstance(content["assessments"], list):
+                content["assessments"] = [_normalize_assessment_payload(item) for item in content["assessments"]]
+            return ChecklistBatchResult.model_validate(content)
+        return ChecklistBatchResult.model_validate({"assessments": [_normalize_assessment_payload(content)]})
+    if isinstance(content, str):
+        content = _extract_json_payload_text(content)
+        try:
+            decoded = json.loads(content)
+        except json.JSONDecodeError:
+            return ChecklistBatchResult.model_validate_json(content)
+        return _parse_checklist_batch_result(decoded)
+    return ChecklistBatchResult.model_validate(content)
+
+
+def _normalize_assessment_payload(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    normalized = dict(item)
+    if "status" not in normalized and "assessment" in normalized:
+        normalized["status"] = normalized.pop("assessment")
+    return normalized
+
+
+def _extract_json_payload_text(text: str) -> str:
+    stripped = text.strip()
+    fence_match = re.search(r"```(?:json)?\s*(.*?)\s*```", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        return fence_match.group(1).strip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        return stripped
+    object_start = stripped.find("{")
+    array_start = stripped.find("[")
+    candidates = [index for index in (object_start, array_start) if index >= 0]
+    if not candidates:
+        return stripped
+    start = min(candidates)
+    end = max(stripped.rfind("}"), stripped.rfind("]"))
+    if end <= start:
+        return stripped
+    return stripped[start : end + 1]
+
+
 def _build_vision_definition_batches(
     definitions: list[ChecklistDefinition],
     pages: list[ExtractedPage],
     visual_page_index: VisualPageIndex,
+    figure_table_assets: list[FigureTableAsset] | None = None,
 ) -> list[DefinitionBatch]:
     grouped: dict[str, list[ChecklistDefinition]] = defaultdict(list)
     for definition in definitions:
@@ -583,13 +649,34 @@ def _build_vision_definition_batches(
 
     batches: list[DefinitionBatch] = []
     for label, grouped_definitions in grouped.items():
+        if _definitions_target_figure_table_assets(grouped_definitions) and figure_table_assets:
+            asset_chunks = _chunked(
+                sorted(
+                    [asset for asset in figure_table_assets if asset.image_path],
+                    key=lambda asset: (asset.pdf_page, asset.caption_bbox[1], asset.caption_bbox[0], asset.kind),
+                ),
+                max(1, settings.max_visual_images_per_batch),
+            )
+            for asset_index, asset_chunk in enumerate(asset_chunks, start=1):
+                page_numbers = sorted({asset.pdf_page for asset in asset_chunk})
+                for definition_batch in _chunked(grouped_definitions, settings.max_check_items_per_batch):
+                    batches.append(
+                        DefinitionBatch(
+                            label=f"{label} / 图表截图批次 {asset_index}",
+                            page_numbers=page_numbers,
+                            definitions=definition_batch,
+                            asset_keys=[_figure_table_asset_key(asset) for asset in asset_chunk],
+                        )
+                    )
+            continue
+
         page_numbers = sorted(
             _collect_vision_batch_page_candidates(
                 grouped_definitions,
                 pages,
                 visual_page_index,
-                settings.max_page_image_candidates,
-                max_total=settings.max_image_pages_per_batch,
+                settings.max_visual_images_per_batch,
+                max_total=settings.max_visual_images_per_batch,
             )
         )
         for definition_batch in _chunked(grouped_definitions, settings.max_check_items_per_batch):
@@ -608,6 +695,27 @@ def _definition_group_label(definition: ChecklistDefinition) -> str:
     if len(parts) >= 2:
         return parts[1]
     return parts[0]
+
+
+def _extract_vision_figure_table_assets(
+    definitions: list[ChecklistDefinition],
+    pdf_path: Path,
+    temp_path: Path,
+) -> list[FigureTableAsset] | None:
+    if not _definitions_target_figure_table_assets(definitions) or not pdf_path.exists():
+        return None
+    try:
+        return extract_figure_table_assets(pdf_path, temp_path / "figure-table-assets")
+    except Exception as exc:
+        logger.warning("figure/table asset extraction failed for vision checks: %s", exc)
+        return None
+
+
+def _definitions_target_figure_table_assets(definitions: list[ChecklistDefinition]) -> bool:
+    return any(
+        _targets_figure_table_visuals(f"{definition.source_section} {definition.requirement}")
+        for definition in definitions
+    )
 
 
 def _run_local_segment_reviews(
@@ -709,16 +817,23 @@ def _build_global_summary(
 def _build_text_batch_prompt(batch: DefinitionBatch, pages: list[ExtractedPage]) -> str:
     snippet_lines = [_format_page_snippet(page) for page in pages if page.number in batch.page_numbers]
     parts: list[str] = ["\n\n".join(snippet_lines)]
-    checklist_lines = [
-        f"- check_id: {item.check_id}\n  section: {item.source_section}\n  severity: {item.severity}\n  requirement: {item.requirement}"
-        for item in batch.definitions
-    ]
+    checklist_lines: list[str] = []
+    for item in batch.definitions:
+        checklist_lines.append(
+            f"- check_id: {item.check_id}\n  section: {item.source_section}\n  severity: {item.severity}\n  requirement: {item.requirement}"
+        )
+        if item.examples:
+            example_text = "\n    - ".join([""] + list(item.examples[:3]))
+            checklist_lines.append(f"  expert_comment_examples:{example_text}")
     parts.append("Review the thesis checklist items against the document snippets above.")
     if batch.label.startswith("PDF pages"):
         parts.append(f"Review scope: {batch.label}.")
     else:
         parts.append(f"Primary review direction: {batch.label}.")
     parts.append("Only use the provided snippets. If the evidence is insufficient, return `needs_manual_review`.")
+    parts.append(
+        "Expert comment examples are illustrative: use them to understand what kind of problems to look for, but judge the current thesis on its own evidence."
+    )
     parts.append("Checklist items:\n" + "\n".join(checklist_lines))
     parts.append(
         "Important: the `pages` field in your structured response must use PDF page numbers, not thesis printed page numbers."
@@ -726,7 +841,11 @@ def _build_text_batch_prompt(batch: DefinitionBatch, pages: list[ExtractedPage])
     return "\n\n".join(parts)
 
 
-def _build_vision_batch_prompt(batch: DefinitionBatch, pages: list[ExtractedPage]) -> str:
+def _build_vision_batch_prompt(
+    batch: DefinitionBatch,
+    pages: list[ExtractedPage],
+    rendered: VisionBatchImages | None = None,
+) -> str:
     snippet_lines = [_format_page_snippet(page) for page in pages if page.number in batch.page_numbers]
     parts: list[str] = ["\n\n".join(snippet_lines)]
     checklist_lines = [
@@ -734,18 +853,115 @@ def _build_vision_batch_prompt(batch: DefinitionBatch, pages: list[ExtractedPage
         for item in batch.definitions
     ]
     parts.append(
-        "Review the visual checklist items against the document snippets above and the attached thesis page images."
+        "Review the visual checklist items against the document snippets above and the attached thesis page or figure/table images."
     )
     parts.append(f"Primary review direction: {batch.label}.")
-    parts.append(
-        f"The attached images correspond to pages in this order: {', '.join(_format_page_reference(page, pages) for page in batch.page_numbers)}."
-    )
+    if rendered and rendered.image_context:
+        parts.append("Attached image order:\n" + "\n".join(rendered.image_context))
+        if rendered.source == "figure_table_assets":
+            parts.append(
+                "重要：这些图表图片来自自动裁剪，可能包含相邻正文、公式或页码，也可能略微超出图表边界。"
+                "判断时请以图表标题、图表主体、编号和标题位置为依据，不要把裁剪上下文直接视为论文本身的违规。"
+                "如果自动裁剪缺少关键图表内容，请返回 `needs_manual_review`，并说明需要复核原始页面。"
+            )
+    else:
+        parts.append(
+            f"The attached images correspond to pages in this order: {', '.join(_format_page_reference(page, pages) for page in batch.page_numbers)}."
+        )
     parts.append("Use `needs_manual_review` if the images still do not provide enough evidence.")
     parts.append("Checklist items:\n" + "\n".join(checklist_lines))
+    parts.append(
+        "Important: return exactly one assessment for every listed check_id, and copy each check_id exactly as provided."
+    )
     parts.append(
         "Important: the `pages` field in your structured response must use PDF page numbers, not thesis printed page numbers."
     )
     return "\n\n".join(parts)
+
+
+def _render_vision_batch_images(
+    pdf_path: Path,
+    batch: DefinitionBatch,
+    pages: list[ExtractedPage],
+    output_dir: Path,
+    figure_table_assets: list[FigureTableAsset] | None = None,
+) -> VisionBatchImages:
+    if _batch_targets_figure_table_assets(batch) and pdf_path.exists():
+        try:
+            assets = figure_table_assets
+            if assets is None:
+                assets = extract_figure_table_assets(pdf_path, output_dir / "figure-table-assets")
+            selected_assets = _select_figure_table_assets_for_batch(assets, batch.page_numbers, batch.asset_keys)
+            images = [
+                Image(filepath=Path(asset.image_path), detail="high")
+                for asset in selected_assets
+                if asset.image_path is not None
+            ]
+            if images:
+                return VisionBatchImages(
+                    images=images,
+                    image_context=[
+                        _format_asset_image_context(index, asset, pages)
+                        for index, asset in enumerate(selected_assets, start=1)
+                        if asset.image_path is not None
+                    ],
+                    source="figure_table_assets",
+                )
+        except Exception as exc:
+            logger.warning("figure/table asset extraction failed for vision batch %s: %s", batch.label, exc)
+
+    images = _render_pages_to_images(pdf_path, batch.page_numbers, output_dir)
+    return VisionBatchImages(
+        images=images,
+        image_context=[
+            f"{index}. {_format_page_reference(page_number, pages)}"
+            for index, page_number in enumerate(batch.page_numbers, start=1)
+        ],
+        source="page_images",
+    )
+
+
+def _batch_targets_figure_table_assets(batch: DefinitionBatch) -> bool:
+    return any(
+        _targets_figure_table_visuals(f"{definition.source_section} {definition.requirement}")
+        for definition in batch.definitions
+    )
+
+
+def _select_figure_table_assets_for_batch(
+    assets: list[FigureTableAsset],
+    page_numbers: list[int],
+    asset_keys: list[str] | None = None,
+) -> list[FigureTableAsset]:
+    if asset_keys:
+        key_set = set(asset_keys)
+        selected = [asset for asset in assets if _figure_table_asset_key(asset) in key_set and asset.image_path]
+    else:
+        page_set = set(page_numbers)
+        selected = [asset for asset in assets if asset.pdf_page in page_set and asset.image_path]
+    selected.sort(key=lambda asset: (asset.pdf_page, asset.caption_bbox[1], asset.caption_bbox[0], asset.kind))
+    if asset_keys:
+        return selected
+    max_assets = max(settings.max_visual_images_per_batch, 1)
+    return selected[:max_assets]
+
+
+def _figure_table_asset_key(asset: FigureTableAsset) -> str:
+    return f"{asset.kind}:{asset.label}:page:{asset.pdf_page}:caption:{asset.caption_bbox}"
+
+
+def _format_asset_image_context(index: int, asset: FigureTableAsset, pages: list[ExtractedPage]) -> str:
+    kind_name = "图截图" if asset.kind == "figure" else "表截图"
+    position_text = {
+        "above": "标题在主体上方",
+        "below": "标题在主体下方",
+        "overlap": "标题与主体区域重叠",
+        "unknown": "标题与主体位置未知",
+    }[asset.caption_position]
+    return (
+        f"{index}. {kind_name}: {asset.label} {asset.title}；"
+        f"{_format_page_reference(asset.pdf_page, pages)}；{position_text}；抽取方式: {asset.detection_method}"
+    )
 
 
 def _build_global_review_prompt(
@@ -857,6 +1073,7 @@ def _select_visual_relevant_pages(
             _build_visual_query_terms(combined),
             caption_pages=visual_page_index.caption_pages,
             reference_pages=visual_page_index.reference_pages,
+            image_pages=visual_page_index.image_pages,
         )
         if figure_table_pages:
             return figure_table_pages[:limit]
@@ -907,6 +1124,7 @@ def _rank_pages_by_keywords(
     *,
     caption_pages: list[int] | None = None,
     reference_pages: list[int] | None = None,
+    image_pages: list[int] | None = None,
 ) -> list[int]:
     if not candidate_pages:
         return []
@@ -914,6 +1132,7 @@ def _rank_pages_by_keywords(
     page_lookup = {page.number: page for page in pages}
     caption_page_set = set(caption_pages or [])
     reference_page_set = set(reference_pages or [])
+    image_page_set = set(image_pages or [])
     scored_pages: list[tuple[int, int]] = []
     for page_number in candidate_pages:
         page = page_lookup.get(page_number)
@@ -927,6 +1146,8 @@ def _rank_pages_by_keywords(
             score += page.text.count(keyword)
         if page_number in caption_page_set:
             score += 6
+        if page_number in image_page_set:
+            score += 4
         if page_number in reference_page_set:
             score += 2
         scored_pages.append((score, page_number))
@@ -1203,14 +1424,26 @@ def _persist_llm_telemetry(
 
 def _build_issues(checks: list[AnalysisCheck]) -> list[AnalysisIssue]:
     issues: list[AnalysisIssue] = []
+    seen: set[tuple[str, int, str, str]] = set()
     for check in checks:
         if check.status != "failed":
             continue
+        page_index = _select_issue_page_index(check)
+        issue_page = check.pages[page_index] if check.pages else 1
+        key = (
+            check.check_id,
+            issue_page,
+            check.title,
+            check.rationale,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
         issues.append(
             AnalysisIssue(
-                page=(check.pages[0] if check.pages else 1),
-                page_label=(check.page_labels[0] if check.page_labels else None),
-                pdf_page=(check.pdf_pages[0] if check.pdf_pages else None),
+                page=key[1],
+                page_label=(check.page_labels[page_index] if page_index < len(check.page_labels) else None),
+                pdf_page=(check.pdf_pages[page_index] if page_index < len(check.pdf_pages) else None),
                 issue_type=check.title,
                 severity=check.severity,
                 description=check.rationale,
@@ -1218,6 +1451,24 @@ def _build_issues(checks: list[AnalysisCheck]) -> list[AnalysisIssue]:
             )
         )
     return issues
+
+
+def _select_issue_page_index(check: AnalysisCheck) -> int:
+    if not check.pages:
+        return 0
+
+    pdf_mentions = [int(value) for value in re.findall(r"PDF\s*第\s*(\d+)\s*页", check.rationale)]
+    for pdf_page in pdf_mentions:
+        if pdf_page in check.pdf_pages:
+            return check.pdf_pages.index(pdf_page)
+
+    page_mentions = [value for value in re.findall(r"(?<!PDF)第\s*([A-Za-z]?\d+|[IVXLCDM]+)\s*页", check.rationale)]
+    normalized_labels = [label.strip() for label in check.page_labels]
+    for mentioned in page_mentions:
+        if mentioned in normalized_labels:
+            return normalized_labels.index(mentioned)
+
+    return 0
 
 
 def _apply_page_mapping_to_checks(checks: list[AnalysisCheck], pages: list[ExtractedPage]) -> list[AnalysisCheck]:

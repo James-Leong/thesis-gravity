@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha1
 from typing import Literal
 
 
+# Keywords that trigger rule-layer detectors.
 RULE_KEYWORDS = (
     "盲审",
     "英文题目",
@@ -20,6 +21,7 @@ RULE_KEYWORDS = (
     "相似度检测",
 )
 
+# Keywords that identify figure/table visual checks.
 FIGURE_TABLE_VISION_KEYWORDS = (
     "坐标",
     "单位",
@@ -74,6 +76,19 @@ class ChecklistDefinition:
     layer: Literal["rule", "text_model", "vision_model"]
     detector: str
     severity: Literal["low", "medium", "high"]
+    examples: tuple[str, ...] = field(default_factory=tuple)
+
+    def with_example(self, example: str) -> "ChecklistDefinition":
+        return ChecklistDefinition(
+            check_id=self.check_id,
+            title=self.title,
+            source_section=self.source_section,
+            requirement=self.requirement,
+            layer=self.layer,
+            detector=self.detector,
+            severity=self.severity,
+            examples=self.examples + (example,),
+        )
 
 
 @dataclass(frozen=True)
@@ -83,23 +98,38 @@ class ParsedReference:
 
 
 def parse_reference_checklist(reference_text: str) -> ParsedReference:
+    """Parse the reference Markdown into check definitions.
+
+    Headings form the section path. Bullet items under normal headings become
+    check definitions. Bullet items under a heading whose title contains
+    "专家评语再现" are treated as expert comment examples and attached to the
+    most recent normal check definition in the same section path.
+    """
     headings: list[tuple[int, str]] = []
     checklist: list[ChecklistDefinition] = []
+    heading_example_definitions: dict[str, ChecklistDefinition] = {}
+    plain_expert_section = False
 
     for line_number, raw_line in enumerate(reference_text.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
             continue
 
-        heading_match = re.match(r"^(#{2,4})\s+(.*)$", line)
+        heading_match = re.match(r"^(#{2,5})\s+(.*)$", line)
         if heading_match:
             level = len(heading_match.group(1))
             title = heading_match.group(2).strip()
             headings = [item for item in headings if item[0] < level]
             headings.append((level, title))
+            plain_expert_section = False
+            continue
+
+        if "专家评语" in line and not line.startswith("- "):
+            plain_expert_section = True
             continue
 
         if not line.startswith("- "):
+            plain_expert_section = False
             continue
 
         requirement = line[2:].strip("；; ")
@@ -107,23 +137,101 @@ def parse_reference_checklist(reference_text: str) -> ParsedReference:
             continue
 
         source_section = _build_section_path(headings)
+        if _is_expert_comment_section(headings) or plain_expert_section or _looks_like_expert_example(requirement):
+            _attach_or_create_heading_example(
+                checklist,
+                heading_example_definitions,
+                source_section,
+                requirement,
+                line_number,
+            )
+            continue
+
         title = _derive_title(source_section, requirement)
         layer, detector = _classify_requirement(source_section, requirement)
         severity = _classify_severity(source_section, requirement)
         digest = sha1(f"{source_section}|{requirement}|{line_number}".encode("utf-8")).hexdigest()[:12]
-        checklist.append(
-            ChecklistDefinition(
-                check_id=f"chk_{digest}",
-                title=title,
-                source_section=source_section,
-                requirement=requirement,
-                layer=layer,
-                detector=detector,
-                severity=severity,
-            )
+        definition = ChecklistDefinition(
+            check_id=f"chk_{digest}",
+            title=title,
+            source_section=source_section,
+            requirement=requirement,
+            layer=layer,
+            detector=detector,
+            severity=severity,
         )
+        checklist.append(definition)
+        plain_expert_section = False
 
     return ParsedReference(checklist=checklist, raw_text=reference_text)
+
+
+def _is_expert_comment_section(headings: list[tuple[int, str]]) -> bool:
+    return any("专家评语" in title for _, title in headings)
+
+
+def _attach_example_to_section_definitions(
+    checklist: list[ChecklistDefinition], source_section: str, example: str
+) -> bool:
+    updated_any = False
+    for index, definition in enumerate(checklist):
+        if definition.source_section != source_section:
+            continue
+        checklist[index] = definition.with_example(example)
+        updated_any = True
+    return updated_any
+
+
+def _attach_or_create_heading_example(
+    checklist: list[ChecklistDefinition],
+    heading_example_definitions: dict[str, ChecklistDefinition],
+    source_section: str,
+    example: str,
+    line_number: int,
+) -> None:
+    updated_any = _attach_example_to_section_definitions(checklist, source_section, example)
+    if updated_any:
+        return
+
+    definition = heading_example_definitions.get(source_section)
+    if definition is None:
+        definition = _build_heading_example_definition(source_section, line_number)
+        checklist.append(definition)
+    updated = definition.with_example(example)
+    checklist[checklist.index(definition)] = updated
+    heading_example_definitions[source_section] = updated
+
+
+def _looks_like_expert_example(requirement: str) -> bool:
+    stripped = requirement.strip()
+    if stripped.startswith(("“", '"', "‘", "'")):
+        return True
+    if re.match(r"^P\d+\s*页", stripped, flags=re.IGNORECASE):
+        return True
+    if stripped.startswith(("例如", "比如", "如：", "如:", "评语")):
+        return True
+    if "评语" in stripped[:16]:
+        return True
+    return False
+
+
+def _build_heading_example_definition(source_section: str, line_number: int) -> ChecklistDefinition:
+    requirement = source_section.split(" / ")[-1]
+    layer, detector = _classify_requirement(source_section, requirement)
+    if layer == "rule":
+        layer = "text_model"
+        detector = "text_review"
+    severity = _classify_severity(source_section, requirement)
+    digest = sha1(f"{source_section}|{requirement}|heading_examples|{line_number}".encode("utf-8")).hexdigest()[:12]
+    return ChecklistDefinition(
+        check_id=f"chk_{digest}",
+        title=_derive_title(source_section, requirement),
+        source_section=source_section,
+        requirement=requirement,
+        layer=layer,
+        detector=detector,
+        severity=severity,
+    )
 
 
 def extract_query_terms(text: str) -> list[str]:
@@ -131,7 +239,7 @@ def extract_query_terms(text: str) -> list[str]:
     ascii_terms = re.findall(r"[A-Za-z][A-Za-z0-9_\-+.]{1,}", normalized)
     cjk_terms = [
         chunk
-        for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", normalized)
+        for chunk in re.findall(r"[一-鿿]{2,}", normalized)
         if chunk not in {"专家评语再现", "论文", "本文", "作者", "建议", "一般", "部分", "内容", "要求"}
     ]
     tokens = ascii_terms + cjk_terms
@@ -149,7 +257,9 @@ def _build_section_path(headings: list[tuple[int, str]]) -> str:
         return "未分类"
 
     titles = [title for _, title in headings]
-    if titles and "专家评语再现" in titles[-1] and len(titles) >= 2:
+    # Strip the "专家评语再现" marker from the displayed path so definitions
+    # group naturally under their parent section.
+    if titles and "专家评语" in titles[-1] and len(titles) >= 2:
         titles = titles[:-1]
     return " / ".join(titles)
 
