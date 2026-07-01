@@ -73,7 +73,9 @@ cp .env.example .env
 行为：
 
 - 先构建前端
+- 自动设置 `ENV=production`，后端以生产模式运行
 - 再由 FastAPI 提供静态资源和 API
+- 访问地址：`http://127.0.0.1:8000`（FastAPI 同时提供前端静态文件和 API）
 
 ## 启动脚本约定
 
