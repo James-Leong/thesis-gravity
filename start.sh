@@ -53,6 +53,8 @@ run_prod() {
 		exit 1
 	fi
 
+	export ENV=production
+
 	(
 		cd "$PROJECT_ROOT/frontend"
 		npm run build
